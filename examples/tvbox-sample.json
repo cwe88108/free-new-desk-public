@@ -1,0 +1,15 @@
+{
+  "spider": "",
+  "sites": [
+    {
+      "key": "sample-cms",
+      "name": "Free New Desk 示例 CMS（请替换）",
+      "type": 1,
+      "api": "https://example.invalid/api.php/provide/vod/",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1
+    }
+  ],
+  "lives": []
+}

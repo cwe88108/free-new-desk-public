@@ -1,0 +1,24 @@
+import { createHash } from 'node:crypto';
+import { mkdir,readFile,readdir,rm,stat,writeFile } from 'node:fs/promises';
+import path from 'node:path';
+interface Meta{contentType:string;expiresAt:number;accessedAt:number;size:number;}
+export interface CacheValue{data:Buffer;contentType:string;}
+export interface CacheNamespaceStats{namespace:string;bytes:number;files:number;}
+export interface CacheStats{bytes:number;files:number;maxBytes:number;namespaces:CacheNamespaceStats[];}
+export type CacheWriter=(file:string,data:string|Uint8Array,encoding?:BufferEncoding)=>Promise<void>;
+const defaultWriter:CacheWriter=async(file,data,encoding)=>{if(encoding)await writeFile(file,data,encoding);else await writeFile(file,data);};
+export class DiskCache{
+  #maxBytes:number;readonly #writer:CacheWriter;
+  constructor(readonly root:string,maxBytes=1024*1024*1024,writer:CacheWriter=defaultWriter){this.#maxBytes=maxBytes;this.#writer=writer;}
+  async init():Promise<void>{await mkdir(this.root,{recursive:true});await this.prune();}
+  setMaxBytes(value:number):void{this.#maxBytes=Math.max(64*1024*1024,Math.min(value,8*1024*1024*1024));void this.prune();}
+  #dir(namespace:string):string{return path.join(this.root,namespace.replace(/[^a-z0-9_-]/gi,'_'));}
+  #id(key:string):string{return createHash('sha256').update(key).digest('hex');}
+  #paths(namespace:string,key:string){const dir=this.#dir(namespace);const id=this.#id(key);return{dir,data:path.join(dir,`${id}.bin`),meta:path.join(dir,`${id}.json`)}}
+  async get(namespace:string,key:string):Promise<CacheValue|undefined>{const p=this.#paths(namespace,key);try{const meta=JSON.parse(await readFile(p.meta,'utf8')) as Meta;if(meta.expiresAt<Date.now()){await Promise.allSettled([rm(p.meta,{force:true}),rm(p.data,{force:true})]);return undefined;}const data=await readFile(p.data);meta.accessedAt=Date.now();void this.#writer(p.meta,JSON.stringify(meta),'utf8');return{data,contentType:meta.contentType};}catch{return undefined;}}
+  async put(namespace:string,key:string,data:Buffer|Uint8Array,contentType='application/octet-stream',ttlMs=24*60*60*1000):Promise<void>{const p=this.#paths(namespace,key);await mkdir(p.dir,{recursive:true});const bytes=Buffer.from(data);const meta:Meta={contentType,expiresAt:Date.now()+ttlMs,accessedAt:Date.now(),size:bytes.byteLength};try{await Promise.all([this.#writer(p.data,bytes),this.#writer(p.meta,JSON.stringify(meta),'utf8')]);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOSPC')throw error;await Promise.allSettled([rm(p.data,{force:true}),rm(p.meta,{force:true})]);await this.clear();await mkdir(p.dir,{recursive:true});await this.#writer(p.data,bytes);await this.#writer(p.meta,JSON.stringify(meta),'utf8');}await this.prune();}
+  async clear(namespace?:string):Promise<void>{if(namespace)await rm(this.#dir(namespace),{recursive:true,force:true});else{for(const item of await readdir(this.root,{withFileTypes:true}).catch(()=>[]))if(item.isDirectory())await rm(path.join(this.root,item.name),{recursive:true,force:true});}}
+  async stats():Promise<CacheStats>{const entries=await this.#entries();const grouped=new Map<string,{bytes:number;files:number}>();for(const item of entries){const value=grouped.get(item.namespace)??{bytes:0,files:0};value.bytes+=item.size;value.files+=1;grouped.set(item.namespace,value);}return{bytes:entries.reduce((sum,item)=>sum+item.size,0),files:entries.length,maxBytes:this.#maxBytes,namespaces:[...grouped.entries()].map(([namespace,value])=>({namespace,...value})).sort((a,b)=>b.bytes-a.bytes)};}
+  async prune():Promise<void>{const entries=await this.#entries();let total=entries.reduce((sum,item)=>sum+item.size,0);for(const item of entries.filter(item=>item.expiresAt<Date.now())){await Promise.allSettled([rm(item.meta,{force:true}),rm(item.data,{force:true})]);total-=item.size;}if(total<=this.#maxBytes)return;for(const item of entries.filter(item=>item.expiresAt>=Date.now()).sort((a,b)=>a.accessedAt-b.accessedAt)){await Promise.allSettled([rm(item.meta,{force:true}),rm(item.data,{force:true})]);total-=item.size;if(total<=this.#maxBytes)break;}}
+  async #entries():Promise<Array<Meta&{namespace:string;meta:string;data:string}>>{const output:Array<Meta&{namespace:string;meta:string;data:string}>=[];for(const folder of await readdir(this.root,{withFileTypes:true}).catch(()=>[])){if(!folder.isDirectory())continue;const namespace=folder.name;const dir=path.join(this.root,namespace);for(const file of await readdir(dir).catch(()=>[])){if(!file.endsWith('.json'))continue;const metaPath=path.join(dir,file);try{const value=JSON.parse(await readFile(metaPath,'utf8')) as Meta;const dataPath=path.join(dir,file.replace(/\.json$/,'.bin'));const dataStat=await stat(dataPath);output.push({...value,size:dataStat.size,namespace,meta:metaPath,data:dataPath});}catch{/* invalid entries are ignored */}}}return output;}
+}

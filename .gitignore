@@ -1,0 +1,16 @@
+node_modules/
+dist/
+**/dist/
+**/build/
+.packaging/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+coverage/
+.env
+.env.*
+!.env.example
+native/player-host/build/
+third_party/mpv/win-x64/*.dll

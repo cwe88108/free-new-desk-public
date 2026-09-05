@@ -1,0 +1,5 @@
+{
+  "compilerOptions": {
+    "target":"ES2022","module":"NodeNext","moduleResolution":"NodeNext","strict":true,"noUncheckedIndexedAccess":true,"exactOptionalPropertyTypes":true,"useUnknownInCatchVariables":true,"forceConsistentCasingInFileNames":true,"esModuleInterop":true,"skipLibCheck":true,"sourceMap":true,"declaration":true,"declarationMap":true,"resolveJsonModule":true,"types":["node"]
+  }
+}

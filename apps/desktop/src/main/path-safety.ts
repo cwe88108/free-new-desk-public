@@ -1,0 +1,3 @@
+import path from 'node:path';
+export function safeManagedPlaylistPath(root:string,sourceId:string):string{if(!/^[a-z0-9-]{1,64}$/i.test(sourceId))throw new Error('Invalid managed playlist identifier');const safeRoot=path.resolve(root);const target=path.resolve(safeRoot,sourceId+'.playlist');if(path.dirname(target)!==safeRoot)throw new Error('Managed playlist path escaped its root');return target;}
+export function safeCacheNamespacePath(root:string,namespace:string):string{if(!/^[a-z0-9_-]{1,64}$/i.test(namespace))throw new Error('Invalid cache namespace');const safeRoot=path.resolve(root);const target=path.resolve(safeRoot,namespace);if(path.dirname(target)!==safeRoot)throw new Error('Cache namespace path escaped its root');return target;}

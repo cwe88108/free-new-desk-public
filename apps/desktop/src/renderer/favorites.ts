@@ -1,0 +1,10 @@
+import type { DetailResult } from '@free-new-desk/contracts';
+export interface VodFavorite{sourceId:string;sourceName:string;videoId:string;name:string;poster?:string;remark?:string;label?:string;createdAt:string;}
+const KEY='vod.favorites';
+function parse(value:string|undefined):VodFavorite[]{if(!value)return[];try{const items=JSON.parse(value) as unknown;if(!Array.isArray(items))return[];return items.filter((item):item is VodFavorite=>Boolean(item&&typeof item==='object'&&typeof(item as VodFavorite).sourceId==='string'&&typeof(item as VodFavorite).videoId==='string'&&typeof(item as VodFavorite).name==='string'));}catch{return[];}}
+export async function listVodFavorites():Promise<VodFavorite[]>{return parse((await window.desktop.settings.list())[KEY]);}
+export async function isVodFavorite(sourceId:string,videoId:string):Promise<boolean>{return(await listVodFavorites()).some(item=>item.sourceId===sourceId&&item.videoId===videoId);}
+export async function toggleVodFavorite(sourceId:string,sourceName:string,detail:DetailResult):Promise<boolean>{const items=await listVodFavorites();const index=items.findIndex(item=>item.sourceId===sourceId&&item.videoId===detail.id);if(index>=0){items.splice(index,1);await window.desktop.settings.set(KEY,JSON.stringify(items));return false;}const favorite:VodFavorite={sourceId,sourceName,videoId:detail.id,name:detail.name,createdAt:new Date().toISOString(),...(detail.poster?{poster:detail.poster}:{}),...(detail.remark?{remark:detail.remark}:{})};items.unshift(favorite);if(items.length>5000)items.length=5000;await window.desktop.settings.set(KEY,JSON.stringify(items));return true;}
+export async function removeVodFavorite(sourceId:string,videoId:string):Promise<void>{const items=(await listVodFavorites()).filter(item=>item.sourceId!==sourceId||item.videoId!==videoId);await window.desktop.settings.set(KEY,JSON.stringify(items));}
+
+export async function saveVodFavorites(items:VodFavorite[]):Promise<void>{const unique=[...new Map(items.map(item=>[item.sourceId+'\u0000'+item.videoId,item])).values()].slice(0,5000);await window.desktop.settings.set(KEY,JSON.stringify(unique));}

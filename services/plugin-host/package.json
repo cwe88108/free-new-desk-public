@@ -1,0 +1,1 @@
+{"name":"@free-new-desk/plugin-host","version":"1.3.0","private":true,"type":"module","main":"dist/worker.js","scripts":{"build":"tsc -p tsconfig.json","typecheck":"tsc -p tsconfig.json --noEmit"},"dependencies":{"@free-new-desk/plugin-sdk":"1.3.0"}}

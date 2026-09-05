@@ -1,0 +1,1254 @@
+{
+  "schemaVersion": 1,
+  "version": "1.3.9",
+  "sourceBaseline": "tests/functional/v138-baseline-matrix.json",
+  "summary": {
+    "baselineFailed": 136,
+    "remediated": 136,
+    "remaining": 0
+  },
+  "note": "Evidence routing for every V1.3.8 failed case. The immutable baseline remains unchanged. CI validates coverage and executes the referenced suites; a pass is valid only when all referenced repository workflows are green.",
+  "suites": {
+    "unit-functional-regression": {
+      "kind": "automated",
+      "path": "tests/unit/functional-regression-v139.test.mjs",
+      "covers": "renderer contracts, controls, lifecycle guards and feature wiring"
+    },
+    "integration-functional-core": {
+      "kind": "automated",
+      "path": "tests/integration/functional-v139-core.test.mjs",
+      "covers": "SQLite persistence/capacity, ENOSPC, traversal, audit concurrency and offline cache"
+    },
+    "playerhost-native": {
+      "kind": "windows-automated",
+      "path": "scripts/test-player-host.ps1",
+      "covers": "x64 native build, concurrent pipe, real media open and invalid media failure"
+    },
+    "windows-lifecycle": {
+      "kind": "windows-packaged",
+      "path": "scripts/test-windows-lifecycle.ps1",
+      "covers": "existing profile, tray, single instance, forced termination and recovery"
+    },
+    "windows-ui-matrix": {
+      "kind": "windows-packaged",
+      "path": "scripts/test-packaged-ui.ps1",
+      "covers": "nine pages, keyboard focus, screen-reader labels, 100/125/150 percent DPI, high contrast and PlayerHost geometry"
+    }
+  },
+  "cases": [
+    {
+      "id": "FT-NAV-005",
+      "title": "单入口灰显",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-NAV-006",
+      "title": "缩略图播放器展开/收起",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-TITLE-004",
+      "title": "扩展菜单",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-STATUS-005",
+      "title": "渲染模式切换",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-STATUS-007",
+      "title": "来源健康态切换",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-003",
+      "title": "6 张统计卡",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-004",
+      "title": "统计卡涨/降",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-005",
+      "title": "JVM 卡片\"已运行\"",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-006",
+      "title": "Plugin SDK 卡片",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-007",
+      "title": "节目预约\"即将开始 2 个\"",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-010",
+      "title": "最近导入配置",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-014",
+      "title": "发布版本卡",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-015",
+      "title": "检查更新",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-017",
+      "title": "缩略图\"Free New Desk\"折叠箭头",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-HOME-018",
+      "title": "折叠/展开记忆",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-002",
+      "title": "切换来源",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-003",
+      "title": "搜索框",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-005",
+      "title": "搜索框防抖",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-007",
+      "title": "搜索框超长",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-008",
+      "title": "筛选按钮",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-009",
+      "title": "筛选关闭",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-010",
+      "title": "4 个 Tab",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-020",
+      "title": "7 个分类 tab",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-022",
+      "title": "tab 不可用",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-023",
+      "title": "多行筛选",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-024",
+      "title": "类型多选",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-025",
+      "title": "地区行",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-026",
+      "title": "年份行",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-027",
+      "title": "排序 5 项",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-028",
+      "title": "排序稳定性",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-040",
+      "title": "总数显示",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-048",
+      "title": "卡片右键",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-049",
+      "title": "双击立即播放",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-060",
+      "title": "分页器",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-061",
+      "title": "翻页 1→2",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-064",
+      "title": "末页",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-066",
+      "title": "跳页输入",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-088",
+      "title": "剧集翻页",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-089",
+      "title": "当前集高亮",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-VOD-090",
+      "title": "演职人员",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-002",
+      "title": "搜索框",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-003",
+      "title": "搜索防抖",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-007",
+      "title": "排序切换",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-012",
+      "title": "虚拟滚动",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-020",
+      "title": "EPG 时区",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-021",
+      "title": "节目预约",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-022",
+      "title": "失败回退",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-023",
+      "title": "自动测速",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-026",
+      "title": "节目详情",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-027",
+      "title": "选源",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-040",
+      "title": "频道元信息",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-041",
+      "title": "分辨率/编号",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-042",
+      "title": "正在播放卡",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-043",
+      "title": "静音切换",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-044",
+      "title": "全屏",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIVE-061",
+      "title": "线路列表",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-002",
+      "title": "搜索框聚焦",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-003",
+      "title": "实时建议",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-005",
+      "title": "单一来源筛选",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-007",
+      "title": "区分点播/直播",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-008",
+      "title": "直播频道匹配",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-011",
+      "title": "关键词极长",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-014",
+      "title": "搜索超时",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-015",
+      "title": "来源全不可用",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-016",
+      "title": "搜索历史",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SEARCH-017",
+      "title": "清空历史",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-002",
+      "title": "Tabs",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-004",
+      "title": "收藏直播列表",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-007",
+      "title": "排序",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-008",
+      "title": "搜索框",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-009",
+      "title": "批量管理",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-010",
+      "title": "批量删除",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-011",
+      "title": "导出收藏",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-012",
+      "title": "导入收藏",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-013",
+      "title": "数量限制",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-014",
+      "title": "来源失效",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-FAV-015",
+      "title": "重命名",
+      "status": "pass",
+      "evidence": [
+        "unit-functional-regression",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-001",
+      "title": "3 个 Tab",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-003",
+      "title": "示例 URL",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-020",
+      "title": "4 张统计卡",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-021",
+      "title": "占比",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-030",
+      "title": "表头",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-031",
+      "title": "行渲染",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-040",
+      "title": "拖拽排序",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-046",
+      "title": "... 操作菜单",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-090",
+      "title": "5 阶段条目",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SRC-094",
+      "title": "并发审计",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-DB-008",
+      "title": "网络中断",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core"
+      ]
+    },
+    {
+      "id": "FT-PLY-012",
+      "title": "音量",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-017",
+      "title": "错误显示",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-018",
+      "title": "渲染模式切换",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-040",
+      "title": "来源",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-041",
+      "title": "所选片源",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-072",
+      "title": "运行时",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-073",
+      "title": "平台",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-074",
+      "title": "缓存状态",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-075",
+      "title": "缓存边界",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-091",
+      "title": "队列项",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-093",
+      "title": "拖拽排序",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-094",
+      "title": "清空",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-PLY-096",
+      "title": "自动续播",
+      "status": "pass",
+      "evidence": [
+        "playerhost-native",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-021",
+      "title": "自动检查",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-041",
+      "title": "容量显示",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-044",
+      "title": "路径打开",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-045",
+      "title": "磁盘空间满",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-060",
+      "title": "7 项版本",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-061",
+      "title": "复制",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-101",
+      "title": "进度",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-121",
+      "title": "三态",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-122",
+      "title": "时间冲突",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-123",
+      "title": "过期",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-124",
+      "title": "查看全部",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-126",
+      "title": "提醒",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-141",
+      "title": "颜色",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-142",
+      "title": "查看全部",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-143",
+      "title": "边界",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-SET-144",
+      "title": "详情",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-002",
+      "title": "已有配置启动",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-003",
+      "title": "单实例",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-005",
+      "title": "强杀恢复",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-006",
+      "title": "崩溃日志",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-007",
+      "title": "JVM 启动",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-008",
+      "title": "JVM 未安装",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-009",
+      "title": "自动更新",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-010",
+      "title": "系统托盘",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-LIFECYCLE-011",
+      "title": "系统菜单",
+      "status": "pass",
+      "evidence": [
+        "windows-lifecycle"
+      ]
+    },
+    {
+      "id": "FT-SEC-008",
+      "title": "路径穿越",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "unit-functional-regression"
+      ]
+    },
+    {
+      "id": "FT-SEC-009",
+      "title": "远程加载",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "unit-functional-regression"
+      ]
+    },
+    {
+      "id": "FT-A11Y-002",
+      "title": "字号",
+      "status": "pass",
+      "evidence": [
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-A11Y-003",
+      "title": "高对比度",
+      "status": "pass",
+      "evidence": [
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-A11Y-004",
+      "title": "键盘 Tab 导航",
+      "status": "pass",
+      "evidence": [
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-A11Y-006",
+      "title": "屏幕阅读",
+      "status": "pass",
+      "evidence": [
+        "windows-ui-matrix"
+      ]
+    },
+    {
+      "id": "FT-ERR-005",
+      "title": "直播流断开",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-lifecycle",
+        "playerhost-native"
+      ]
+    },
+    {
+      "id": "FT-ERR-007",
+      "title": "IPC 断",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-lifecycle",
+        "playerhost-native"
+      ]
+    },
+    {
+      "id": "FT-ERR-008",
+      "title": "磁盘满",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-lifecycle",
+        "playerhost-native"
+      ]
+    },
+    {
+      "id": "FT-ERR-010",
+      "title": "系统休眠",
+      "status": "pass",
+      "evidence": [
+        "integration-functional-core",
+        "windows-lifecycle",
+        "playerhost-native"
+      ]
+    }
+  ]
+}

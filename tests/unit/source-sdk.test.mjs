@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {RequestBroker,mergeHeaders,redactSecrets,resolveUrl} from '../../packages/source-sdk/dist/index.js';
+
+test('URL resolver and case-insensitive header merge are deterministic',()=>{assert.equal(resolveUrl('https://a.test/dir/list.m3u8','../seg.ts'),'https://a.test/seg.ts');const h=mergeHeaders({'User-Agent':'A',Referer:'one'},{'user-agent':'B'});assert.equal(h['user-agent'],'B');assert.equal(h.referer,'one');assert.equal(redactSecrets({Authorization:'secret',Cookie:'a=b',Accept:'*/*'}).Authorization,'<redacted>');});
+
+test('RequestBroker retries transient 5xx keeps cookies scoped and applies source defaults',async t=>{let count=0;let cookieSeen='';let refererSeen='';const server=http.createServer((req,res)=>{count++;cookieSeen=String(req.headers.cookie??'');refererSeen=String(req.headers.referer??'');if(count===1){res.statusCode=503;res.end('retry');return;}if(count===2){res.setHeader('set-cookie','sid=abc; Path=/');res.end('ok');return;}res.end(cookieSeen||'none');});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());const {port}=server.address();const url=`http://127.0.0.1:${port}/`;const broker=new RequestBroker();broker.setDefaultHeaders('a',{Referer:'https://source.example/'});assert.equal(await broker.text({sourceId:'a',url,retries:1}),'ok');assert.equal(refererSeen,'https://source.example/');assert.equal(await broker.text({sourceId:'a',url,retries:0}),'sid=abc');assert.equal(await broker.text({sourceId:'b',url,retries:0}),'none');});

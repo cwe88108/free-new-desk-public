@@ -1,0 +1,1 @@
+{"name":"@free-new-desk/jvm-spider-host","version":"1.2.0","private":true,"type":"module","scripts":{"build":"node build.mjs","typecheck":"node --check build.mjs"}}

@@ -1,0 +1,122 @@
+{
+  "name": "free-new-desk",
+  "version": "1.4.9",
+  "description": "Windows 11 x64 desktop media platform with TVBox/FongMi-compatible source architecture.",
+  "type": "module",
+  "main": "apps/desktop/dist/main/index.js",
+  "author": "cwe88108",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build:packages && npm run build:desktop",
+    "build:packages": "npm run build -w @free-new-desk/contracts && npm run build -w @free-new-desk/source-sdk && npm run build -w @free-new-desk/plugin-sdk && npm run build -w @free-new-desk/source-adapters && npm run build -w @free-new-desk/catvod-runtime-shim && npm run build -w @free-new-desk/tvbox-config && npm run build -w @free-new-desk/live-parser && npm run build -w @free-new-desk/epg-parser && npm run build -w @free-new-desk/data-service && npm run build -w @free-new-desk/proxy-service && npm run build -w @free-new-desk/spider-worker && npm run build -w @free-new-desk/plugin-host && npm run build -w @free-new-desk/jvm-spider-host && npm run build -w @free-new-desk/source-engine",
+    "build:desktop": "npm run build -w @free-new-desk/desktop",
+    "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
+    "lint": "node scripts/lint.mjs",
+    "test": "npm run build:packages && npm run build:desktop && node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build && node scripts/verify-renderer-build.mjs",
+    "dev": "npm run dev -w @free-new-desk/desktop",
+    "player:configure": "cmake -S native/player-host -B native/player-host/build -A x64",
+    "player:build": "cmake --build native/player-host/build --config Release",
+    "prepare:runtime": "node scripts/prepare-runtime-workspaces.mjs",
+    "package:win": "npm run build && npm run prepare:runtime && electron-builder --win nsis portable --x64 --publish never",
+    "smoke:packaged": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-packaged-app.ps1"
+  },
+  "dependencies": {
+    "pinia": "3.0.3",
+    "vue": "3.5.20",
+    "vue-router": "4.5.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "@vitejs/plugin-vue": "6.0.1",
+    "electron": "44.0.0",
+    "electron-builder": "26.0.12",
+    "typescript": "5.9.2",
+    "vite": "7.1.3",
+    "vue-tsc": "3.0.6"
+  },
+  "build": {
+    "appId": "com.cwe88108.freenewdesk",
+    "productName": "Free New Desk",
+    "asar": true,
+    "directories": {
+      "output": "dist/releases"
+    },
+    "files": [
+      "apps/desktop/dist/**/*",
+      "services/source-engine/dist/**/*",
+      "services/source-engine/package.json",
+      "services/data-service/dist/**/*",
+      "services/data-service/package.json",
+      "services/proxy-service/dist/**/*",
+      "services/proxy-service/package.json",
+      "services/spider-worker/dist/**/*",
+      "services/spider-worker/package.json",
+      "services/plugin-host/dist/**/*",
+      "services/plugin-host/package.json",
+      "packages/*/dist/**/*",
+      "packages/*/package.json",
+      {
+        "from": ".packaging/runtime-node-modules",
+        "to": "node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/player-host/build/Release/player-host.exe",
+        "to": "native/player-host/player-host.exe"
+      },
+      {
+        "from": "third_party/mpv/win-x64",
+        "to": "native/player-host",
+        "filter": [
+          "libmpv-2.dll",
+          "SOURCE.txt"
+        ]
+      },
+      {
+        "from": "services/jvm-spider-host/dist/jvm-spider-host.jar",
+        "to": "jvm/jvm-spider-host.jar"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    }
+  }
+}

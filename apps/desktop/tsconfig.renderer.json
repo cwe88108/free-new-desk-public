@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"module":"ESNext","moduleResolution":"Bundler","lib":["ES2022","DOM","DOM.Iterable"],"types":["vite/client"],"noEmit":true,"declaration":false,"declarationMap":false,"baseUrl":".","paths":{"@/*":["src/renderer/*"]}},"include":["src/renderer/**/*.ts","src/renderer/**/*.vue","src/renderer/**/*.d.ts"]}

@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"rootDir":"src/preload","outDir":"dist/preload","declaration":false,"declarationMap":false,"module":"Node16","moduleResolution":"Node16"},"include":["src/preload/**/*.cts"]}

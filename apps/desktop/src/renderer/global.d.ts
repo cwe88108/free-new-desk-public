@@ -1,0 +1,26 @@
+import type { CategoryResult,DetailResult,EpgProgram,HomeResult,ImportGroupRemovalResult,LiveFavorite,LiveGroup,LiveRouteSpeed,LiveSourceConfig,PlaybackEpisodeRequest,PlaybackHistoryEntry,PlayerCommand,PlayerLoadStatus,PlayerStats,PlayerTrack,ProgramReservation,SearchResult,SourceAuditResult,SourceCompatibilityResult,SourceConfig,SourceHealth,TVBoxImportResult } from '@free-new-desk/contracts';
+
+type CacheStats={bytes:number;files:number;maxBytes:number;namespaces:Array<{namespace:string;bytes:number;files:number}>};
+type DiagnosticEvent={time:string;level:string;category:string;message:string};
+type UpdateResult={current:string;latest:string;available:boolean;url:string;channel:'stable'|'daily';checkedAt:string;publishedAt?:string};
+
+declare global{
+  interface Window{
+    desktop:{
+      app:{getInfo():Promise<{version:string;platform:string;arch:string;theme:'light'|'dark';packaged:boolean}>;isUiSmoke():boolean;openRoute(route:string):Promise<boolean>;action(action:'reload'|'devtools'|'quit'|{copy:string}):Promise<boolean>;onNavigate(listener:(path:string)=>void):()=>void};
+      source:{ping():Promise<boolean>;list():Promise<SourceConfig[]>;save(source:SourceConfig):Promise<SourceConfig>;setEnabledBulk(value:{vodSourceIds:string[];liveSourceIds:string[];enabled:boolean}):Promise<{requested:number;changed:number;unchanged:number;failed:Array<{sourceId:string;reason:string}>}>;remove(sourceId:string):Promise<boolean>;removeImportGroup(importGroupId:string):Promise<ImportGroupRemovalResult>;checkImportGroup(importGroupId:string):Promise<SourceCompatibilityResult[]>;home(sourceId:string,force?:boolean):Promise<HomeResult>;category(sourceId:string,categoryId:string,page?:number,filters?:Record<string,string>,force?:boolean):Promise<CategoryResult>;search(sourceId:string,keyword:string,page?:number,force?:boolean):Promise<SearchResult>;detail(sourceId:string,ids:string[],force?:boolean):Promise<DetailResult>;aggregateSearch(keyword:string):Promise<Array<{sourceId:string;sourceName:string;items:import('@free-new-desk/contracts').VideoCard[];error:string|null}>>;cancelAggregateSearch():Promise<boolean>;audit(sourceId:string):Promise<SourceAuditResult>;exportAudit(sourceId:string):Promise<{canceled:boolean;path?:string}>;health():Promise<SourceHealth[]>;onHealthChanged(listener:(value:{ok:boolean;checkedAt:string})=>void):()=>void};
+      config:{importText(text:string):Promise<TVBoxImportResult>;importFile():Promise<{canceled:boolean;result?:TVBoxImportResult;filePath?:string}>};
+      live:{listSources():Promise<LiveSourceConfig[]>;importFile():Promise<{canceled:boolean;source?:LiveSourceConfig;channelCount?:number;compatibility?:SourceCompatibilityResult[]}>;importUrl(value:{name?:string;url:string;epg?:string;userAgent?:string}):Promise<{source:LiveSourceConfig;channelCount:number;compatibility:SourceCompatibilityResult[]}>;saveSource(source:LiveSourceConfig):Promise<LiveSourceConfig>;removeSource(sourceId:string):Promise<boolean>;channels(sourceId:string,force?:boolean):Promise<LiveGroup[]>;play(request:{sourceId:string;channelId:string;routeIndex?:number;allowFallback?:boolean}):Promise<{ok:boolean;detail?:string;routeIndex:number;routeCount:number;attempts?:Array<{index:number;ok:boolean;detail?:string}>}>;speedTest(sourceId:string,channelId:string):Promise<LiveRouteSpeed[]>;favorites():Promise<LiveFavorite[]>;toggleFavorite(liveSourceId:string,channelId:string):Promise<{favorite:boolean}>;saveFavorite(value:LiveFavorite):Promise<boolean>;removeFavorite(liveSourceId:string,channelId:string):Promise<boolean>};
+      epg:{refresh(liveSourceId:string):Promise<{count:number}>;list(liveSourceId:string,channelId?:string):Promise<EpgProgram[]>};
+      playback:{play(request:PlaybackEpisodeRequest):Promise<{ok:boolean;detail?:string}>;control(command:PlayerCommand):Promise<{ok:boolean;detail?:string}>;query(query:'stats'):Promise<PlayerStats>;query(query:'tracks'):Promise<PlayerTrack[]>;query(query:'load-status'):Promise<PlayerLoadStatus>;screenshot():Promise<{path:string}>;smokeLoad():Promise<{ok:boolean;acceptedMs:number;totalMs:number}>;onStageChanged(listener:(value:{stage:string;message:string;error?:string;at:number})=>void):()=>void};
+      history:{list(limit?:number):Promise<PlaybackHistoryEntry[]>;updateProgress(id:string,position:number,duration:number):Promise<boolean>;remove(id:string):Promise<boolean>;clear():Promise<number>};
+      reservation:{list():Promise<ProgramReservation[]>;save(value:Partial<ProgramReservation>):Promise<ProgramReservation>;remove(id:string):Promise<boolean>};
+      settings:{list():Promise<Record<string,string>>;set(key:string,value:string):Promise<boolean>};
+      cache:{stats():Promise<CacheStats>;clear(namespace?:string):Promise<boolean>};
+      diagnostics:{get():Promise<Record<string,string|number>>;events(limit?:number):Promise<DiagnosticEvent[]>;selfTestItem(index:number):Promise<{name:string;ok:boolean;detail:string}>;export():Promise<{path?:string;canceled:boolean}>;recordPerformance(metric:string,value:number):Promise<boolean>};
+      maintenance:{openPath(kind:'logs'|'temp'|`cache:${string}`):Promise<{path:string;error?:string}>};
+      update:{check(channel?:'stable'|'daily'):Promise<UpdateResult>;openReleases():Promise<boolean>};
+    };
+  }
+}
+export {};
