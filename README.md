@@ -1,12 +1,6 @@
 # Free New Desk
 
 > 把 TVBox / FongMi 的「味儿」搬到 Windows 11 桌面 —— 一个**空壳**播放器，所有内容来自你自己配置的来源。
-
-[![Release](https://img.shields.io/badge / Release-v1.4.9-blue)](../../releases)
-[![Platform](https://img.shields.io/badge / Platform-Windows%2011%20x64-0078d4)](.)
-[![Runtime](https://img.shields.io/badge / Runtime-Node%2024-339933)](.)
-[![License](https://img.shields.io/badge / License-Custom-lightgrey)](LICENSE)
-
 Free New Desk 是一个面向 **Windows 11 x64** 的 TVBox / FongMi 风格桌面影音播放器。软件本身**不内置任何第三方影视源**，只提供用户自有或已获授权配置的导入、解析、直播、节目表与播放能力。
 
 ## 一眼看完
