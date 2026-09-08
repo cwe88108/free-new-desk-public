@@ -35,7 +35,7 @@ test('player contract is 0-100 and supports runtime hardware decode switching',a
   const view=await read('apps/desktop/src/renderer/views/PlayerView.vue');
   assert.match(contracts,/literal\('volume'\).*max\(100\)/);
   assert.match(contracts,/literal\('hwdec'\)/);
-  assert.match(native,/command == "hwdec"/);
+  assert.match(native,/command\s*==\s*"hwdec"/);
   assert.match(view,/max="100"/);
   assert.match(view,/播放失败/);
   assert.match(view,/>重试</);

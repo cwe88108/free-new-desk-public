@@ -2,10 +2,11 @@
 import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
 import { useRoute,useRouter } from 'vue-router';
 import type { PlayerStats } from '@free-new-desk/contracts';
+import appIconUrl from './assets/app-icon.png';
 
 const route=useRoute();
 const router=useRouter();
-const version=ref('1.4.9');
+const version=ref('1.4.12');
 const isPackaged=ref(false);
 const sourceHealthy=ref<boolean|null>(null);
 const navigatingPath=ref('');
@@ -21,6 +22,7 @@ const items=[
   {key:'home',path:'/',label:'首页',icon:'home'},
   {key:'vod',path:'/vod',label:'点播',icon:'play'},
   {key:'live',path:'/live',label:'直播',icon:'tv'},
+  {key:'music',path:'/music',label:'音乐',icon:'music'},
   {key:'player',path:'/player',label:'播放器',icon:'circle-play'},
   {key:'search',path:'/search',label:'搜索',icon:'search'},
   {key:'favorites',path:'/favorites',label:'收藏',icon:'star'},
@@ -38,7 +40,7 @@ const mediaStatus=computed(()=>!playerReachable.value?'播放器未连接':playe
 function focusPageSearch(event:KeyboardEvent){if(!(event.ctrlKey||event.metaKey)||event.key.toLowerCase()!=='f')return;const target=event.target as HTMLElement|null;if(target&&['INPUT','SELECT','TEXTAREA'].includes(target.tagName))return;const input=document.querySelector<HTMLElement>('.content [data-search-input]:not([disabled])');if(!input)return;event.preventDefault();menuOpen.value=false;input.focus();input.scrollIntoView({block:'nearest'});}
 
 onMounted(async()=>{
-  try{const info=await window.desktop.app.getInfo();version.value=info.version;isPackaged.value=info.packaged;}catch{/* footer keeps v1.4.9 fallback */}
+  try{const info=await window.desktop.app.getInfo();version.value=info.version;isPackaged.value=info.packaged;}catch{/* footer keeps v1.4.12 fallback */}
   try{sourceHealthy.value=await window.desktop.source.ping();}catch{sourceHealthy.value=false;}
   removeHealthListener=window.desktop.source.onHealthChanged(value=>{sourceHealthy.value=value.ok;});
   removeNavigateListener=window.desktop.app.onNavigate(path=>{void router.push(path);});
@@ -54,9 +56,7 @@ onBeforeUnmount(()=>{removeHealthListener?.();removeNavigateListener?.();if(play
   <div class="app-shell">
     <header class="titlebar">
       <div class="app-brand">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="m10 8 6 4-6 4Z"/></svg>
-        </span>
+        <img class="brand-mark" :src="appIconUrl" alt="" aria-hidden="true"/>
         <strong>Free New Desk</strong>
       </div><div class="title-actions"><button class="title-menu-button" aria-label="扩展菜单" :aria-expanded="menuOpen" @click="menuOpen=!menuOpen">•••</button><div v-if="menuOpen" class="title-menu"><button @click="appAction('reload')">刷新界面</button><button v-if="!isPackaged" @click="appAction('devtools')">开发者工具</button><button @click="appAction('quit')">退出应用</button></div></div>
     </header>
@@ -68,6 +68,7 @@ onBeforeUnmount(()=>{removeHealthListener?.();removeNavigateListener?.();if(play
             <template v-if="item.icon==='home'"><path d="M3 11.2 12 4l9 7.2v8.3a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5Z"/></template>
             <template v-else-if="item.icon==='play'"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></template>
             <template v-else-if="item.icon==='tv'"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="m9 2 3 4 3-4M8 11l6 3-6 3Z"/></template>
+            <template v-else-if="item.icon==='music'"><path d="M10 5v11.2a3 3 0 1 1-2-2.83V7l10-2v9.2a3 3 0 1 1-2-2.83V3.7Z"/></template>
             <template v-else-if="item.icon==='search'"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></template>
             <template v-else-if="item.icon==='star'"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></template>
             <template v-else-if="item.icon==='clock'"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></template>
@@ -78,7 +79,6 @@ onBeforeUnmount(()=>{removeHealthListener?.();removeNavigateListener?.();if(play
           <span>{{item.label}}</span>
         </button>
       </nav>
-
       <div class="sidebar-spacer"/>
     </aside>
 
@@ -95,5 +95,5 @@ onBeforeUnmount(()=>{removeHealthListener?.();removeNavigateListener?.();if(play
   </div>
 </template>
 <style scoped>
-.title-actions{position:relative;margin-left:auto;align-self:center;-webkit-app-region:no-drag}.title-menu-button{width:38px;height:30px;border:0;border-radius:7px;background:transparent;font-weight:800;letter-spacing:2px}.title-menu{position:absolute;right:8px;top:34px;z-index:1000;min-width:140px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.18)}.title-menu button{display:block;width:100%;padding:8px 10px;border:0;border-radius:6px;background:transparent;text-align:left}.title-menu button:hover{background:var(--surface-2)}.nav-item:disabled{opacity:.6;cursor:wait}
+.title-actions{position:relative;margin-left:auto;align-self:center;-webkit-app-region:no-drag}.title-menu-button{width:38px;height:30px;border:0;border-radius:7px;background:transparent;font-weight:800;letter-spacing:2px}.title-menu{position:absolute;right:8px;top:34px;z-index:1000;min-width:140px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.18)}.title-menu button{display:block;width:100%;padding:8px 10px;border:0;border-radius:6px;background:transparent;text-align:left}.title-menu button:hover{background:var(--surface-2)}.nav-item:disabled{opacity:.6;cursor:wait}.brand-mark svg path{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 </style>

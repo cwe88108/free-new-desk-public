@@ -1,7 +1,16 @@
+[CmdletBinding()]
+param(
+  [string]$AppPath = '',
+  [double]$Scale = 0,
+  [switch]$HighContrast
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root 'dist/releases/win-unpacked/Free New Desk.exe'
+$exe = if ($AppPath) { $AppPath } else { Join-Path $root 'dist/releases/win-unpacked/Free New Desk.exe' }
 $captureDir = Join-Path $root 'dist/ui-smoke'
+$captureScale = if ($Scale -gt 0) { [string]$Scale } elseif ($env:FND_DPI_SCALE) { $env:FND_DPI_SCALE } else { '1' }
+$captureHighContrast = $HighContrast -or $env:FND_HIGH_CONTRAST -eq '1'
+$capturePrefix = 'scale-' + $captureScale.Replace('.', '-') + $(if ($captureHighContrast) { '-high-contrast' } else { '-normal' })
 if (-not (Test-Path $exe)) { throw "Packaged executable not found: $exe" }
 
 Add-Type -AssemblyName System.Drawing
@@ -61,7 +70,7 @@ function Capture-Window([IntPtr]$handle, [string]$key) {
     $g2 = [System.Drawing.Graphics]::FromImage($small)
     try {
       $g2.DrawImage($bitmap, 0, 0, $targetWidth, $targetHeight)
-      $target = Join-Path $captureDir ($key + '.jpg')
+      $target = Join-Path $captureDir ($capturePrefix + '-' + $key + '.jpg')
       $jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
       if (-not $jpeg) { throw 'JPEG encoder is unavailable on the Windows runner.' }
       $parameters = New-Object System.Drawing.Imaging.EncoderParameters 1
@@ -74,22 +83,22 @@ function Capture-Window([IntPtr]$handle, [string]$key) {
   } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 
-$expected = @('home','vod','live','player','search','favorites','history','sources','settings')
+$expected = @('home','vod','live','music','player','search','favorites','history','sources','settings')
 $seen = New-Object 'System.Collections.Generic.HashSet[string]'
 $smokeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('free-new-desk-ui-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
 if ($env:FND_CAPTURE_IMAGES -ne '0') {
-  Remove-Item -Recurse -Force $captureDir -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $captureDir | Out-Null
 }
 $process = $null
 $previousSmoke = $env:FND_UI_SMOKE
 try {
   $env:FND_UI_SMOKE = '1'
-  $dpiScale = if ($env:FND_DPI_SCALE) { $env:FND_DPI_SCALE } else { '1' }
+  $dpiScale = $captureScale
   $arguments = @("--user-data-dir=$smokeDir", "--force-device-scale-factor=$dpiScale")
-  if ($env:FND_HIGH_CONTRAST -eq '1') { $arguments += '--force-high-contrast' }
-  Write-Host "Starting packaged UI navigation smoke test at scale $dpiScale (high contrast: $($env:FND_HIGH_CONTRAST -eq '1')): $exe"
+  $highContrastEnabled = $captureHighContrast
+  if ($highContrastEnabled) { $arguments += '--force-high-contrast' }
+  Write-Host "Starting packaged UI navigation smoke test at scale $dpiScale (high contrast: $highContrastEnabled): $exe"
   $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
   $deadline = [DateTime]::UtcNow.AddSeconds(120)
   $lastTitle = ''
@@ -111,6 +120,13 @@ try {
         if ($process.MainWindowTitle -ne $lastTitle) { continue }
         $visibleNativePlayers = @(Get-VisiblePlayerHostChildren $process.MainWindowHandle)
         if ($key -eq 'player' -and $visibleNativePlayers.Count -lt 1) {
+          $surfaceDeadline = [DateTime]::UtcNow.AddSeconds(2)
+          while ([DateTime]::UtcNow -lt $surfaceDeadline -and $visibleNativePlayers.Count -lt 1) {
+            Start-Sleep -Milliseconds 100
+            $visibleNativePlayers = @(Get-VisiblePlayerHostChildren $process.MainWindowHandle)
+          }
+        }
+        if ($key -eq 'player' -and $visibleNativePlayers.Count -lt 1) {
           throw 'Player route rendered without a visible embedded player-host child window.'
         }
         if ($key -ne 'player' -and $seen.Contains('player') -and $visibleNativePlayers.Count -gt 0) {
@@ -127,7 +143,7 @@ try {
           if ($playerRect.Left -lt ($mainRect.Left - 2) -or $playerRect.Top -lt ($mainRect.Top - 2) -or $playerRect.Right -gt ($mainRect.Right + 2) -or $playerRect.Bottom -gt ($mainRect.Bottom + 2)) {
             throw "PlayerHost escaped the application bounds at scale ${dpiScale}: main=($($mainRect.Left),$($mainRect.Top),$($mainRect.Right),$($mainRect.Bottom)); player=($($playerRect.Left),$($playerRect.Top),$($playerRect.Right),$($playerRect.Bottom))"
           }
-          if (($playerRect.Right - $playerRect.Left) -lt 100 -or ($playerRect.Bottom - $playerRect.Top) -lt 80) { throw "PlayerHost surface collapsed at scale $dpiScale." }
+          if (($playerRect.Right - $playerRect.Left) -lt 100 -or ($playerRect.Bottom - $playerRect.Top) -lt 80) { throw "PlayerHost surface collapsed at scale $dpiScale on ${key}: ($($playerRect.Left),$($playerRect.Top),$($playerRect.Right),$($playerRect.Bottom))." }
         }
         if ($firstCapture) { Capture-Window $process.MainWindowHandle $key; Write-Host "UI route rendered and captured: $key" } else { Write-Host "UI route re-validated dynamically: $key" }
         $deadline = [DateTime]::UtcNow.AddSeconds(45)
@@ -144,6 +160,5 @@ try {
 } finally {
   if ($null -eq $previousSmoke) { Remove-Item Env:FND_UI_SMOKE -ErrorAction SilentlyContinue } else { $env:FND_UI_SMOKE = $previousSmoke }
   if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-  Get-Process -Name 'Free New Desk' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Remove-Item -Recurse -Force $smokeDir -ErrorAction SilentlyContinue
+  Write-Host "Smoke data retained for diagnosis: $smokeDir"
 }

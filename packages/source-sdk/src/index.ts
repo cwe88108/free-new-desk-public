@@ -1,4 +1,4 @@
-export interface BrokerRequest{sourceId:string;url:string;method?:string;headers?:Record<string,string>;body?:string;timeoutMs?:number;retries?:number;signal?:AbortSignal;maxBytes?:number;}
+export interface BrokerRequest{sourceId:string;url:string;method?:string;headers?:Record<string,string>;body?:string;timeoutMs?:number;retries?:number;signal?:AbortSignal;maxBytes?:number;redirect?:RequestRedirect;}
 export type RequestOptions=BrokerRequest;
 export interface BrokerMetric{ok:boolean;status:number;latencyMs:number;bytes:number;}
 export function resolveUrl(base:string,value:string):string{return new URL(value,base).toString();}
@@ -9,32 +9,62 @@ function retryable(error:unknown):boolean{return error instanceof TypeError||(er
 const browserUserAgent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
 const liveCompatibilityUserAgents=['okhttp/3.15','bingcha/1.1 (mianfeifenxiang) ','Goiptv/8.8.8'];
 const CONFIG_MAX_BYTES=8*1024*1024;
+const LIVE_PROBE_BUDGET_MS=2500;
+const LIVE_PROBE_BYTES=64*1024;
 function hasHeader(headers:Record<string,string>|undefined,name:string):boolean{return Object.keys(headers??{}).some(key=>key.toLowerCase()===name.toLowerCase());}
+function withoutHeader(headers:Record<string,string>|undefined,name:string):Record<string,string>|undefined{if(!headers)return undefined;const output=Object.fromEntries(Object.entries(headers).filter(([key])=>key.toLowerCase()!==name.toLowerCase()));return Object.keys(output).length?output:undefined;}
+function firstPlaylistUri(text:string):string|undefined{return text.split(/\r?\n/).map(line=>line.trim()).find(line=>Boolean(line)&&!line.startsWith('#'));}
 async function decodeText(response:Response):Promise<string>{const bytes=await response.arrayBuffer();const charset=response.headers.get('content-type')?.match(/charset=([^;\s]+)/i)?.[1]?.replace(/["']/g,'')||'utf-8';try{return new TextDecoder(charset).decode(bytes);}catch{return new TextDecoder('utf-8').decode(bytes);}}
 function limitedResponse(response:Response,maxBytes:number):Response{const declared=Number(response.headers.get('content-length'));if(Number.isFinite(declared)&&declared>maxBytes){void response.body?.cancel();throw new Error(`Response exceeds ${maxBytes} byte safety limit`);}if(!response.body)return response;const reader=response.body.getReader();let total=0;const stream=new ReadableStream<Uint8Array>({async pull(controller){try{const part=await reader.read();if(part.done){controller.close();return;}total+=part.value.byteLength;if(total>maxBytes){await reader.cancel('response size limit');controller.error(new Error(`Response exceeds ${maxBytes} byte safety limit`));return;}controller.enqueue(part.value);}catch(error){controller.error(error);}},async cancel(reason){await reader.cancel(reason);}});const limited=new Response(stream,{status:response.status,statusText:response.statusText,headers:response.headers});const url=response.url,redirected=response.redirected,type=response.type;return new Proxy(limited,{get(target,property){if(property==='url')return url;if(property==='redirected')return redirected;if(property==='type')return type;const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;}}) as Response;}
 export class RequestBroker{
   readonly #cookies=new SourceCookieStore();readonly #defaults=new Map<string,Record<string,string>>();
   setDefaultHeaders(sourceId:string,headers?:Record<string,string>):void{if(headers&&Object.keys(headers).length)this.#defaults.set(sourceId,{...headers});else this.#defaults.delete(sourceId);}
   clearDefaultHeaders(sourceId:string):void{this.#defaults.delete(sourceId);}
-  async request(request:BrokerRequest):Promise<Response>{const attempts=Math.max(1,(request.retries??1)+1);let last:unknown;for(let attempt=0;attempt<attempts;attempt+=1){if(request.signal?.aborted)throw request.signal.reason??new DOMException('Aborted','AbortError');const linked=linkedSignal(request.timeoutMs??15_000,request.signal);try{const headers=new Headers(mergeHeaders(this.#defaults.get(request.sourceId),request.headers));const cookie=this.#cookies.header(request.sourceId,request.url);if(cookie&&!headers.has('cookie'))headers.set('cookie',cookie);if(!headers.has('user-agent'))headers.set('user-agent',browserUserAgent);const response=await fetch(request.url,{method:request.method??(request.body?'POST':'GET'),headers,redirect:'follow',signal:linked.signal,...(request.body!==undefined?{body:request.body}:{})});this.#cookies.capture(request.sourceId,response.url||request.url,response.headers);if(response.status>=500&&attempt+1<attempts){await response.body?.cancel();await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));continue;}const maxBytes=request.maxBytes??(request.sourceId==='config-import'?CONFIG_MAX_BYTES:undefined);return maxBytes!==undefined?limitedResponse(response,maxBytes):response;}catch(error){last=error;if(attempt+1>=attempts||!retryable(error))throw error;await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));}finally{linked.dispose();}}throw last instanceof Error?last:new Error('Request failed');}
-  async text(request:BrokerRequest):Promise<string>{
-    let response=await this.request(request);
-    if(response.ok)return decodeText(response);
-    const canTryLiveUa=request.sourceId.startsWith('live:')&&!hasHeader(request.headers,'User-Agent')&&(response.status===401||response.status===403);
-    if(canTryLiveUa){
-      await response.body?.cancel();
-      for(const userAgent of liveCompatibilityUserAgents){
-        response=await this.request({...request,headers:{...(request.headers??{}),'User-Agent':userAgent},retries:0});
-        if(response.ok)return decodeText(response);
-        await response.body?.cancel();
-        if(response.status!==401&&response.status!==403)break;
-      }
-    }
-    throw new Error(`HTTP ${response.status} for source request`);
-  }
+  async request(request:BrokerRequest):Promise<Response>{const attempts=Math.max(1,(request.retries??1)+1);let last:unknown;for(let attempt=0;attempt<attempts;attempt+=1){if(request.signal?.aborted)throw request.signal.reason??new DOMException('Aborted','AbortError');const linked=linkedSignal(request.timeoutMs??15_000,request.signal);try{const headers=new Headers(mergeHeaders(this.#defaults.get(request.sourceId),request.headers));const cookie=this.#cookies.header(request.sourceId,request.url);if(cookie&&!headers.has('cookie'))headers.set('cookie',cookie);if(!headers.has('user-agent'))headers.set('user-agent',browserUserAgent);const response=await fetch(request.url,{method:request.method??(request.body?'POST':'GET'),headers,redirect:request.redirect??'follow',signal:linked.signal,...(request.body!==undefined?{body:request.body}:{})});this.#cookies.capture(request.sourceId,response.url||request.url,response.headers);if(response.status>=500&&attempt+1<attempts){await response.body?.cancel();await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));continue;}const maxBytes=request.maxBytes??(request.sourceId==='config-import'?CONFIG_MAX_BYTES:undefined);return maxBytes!==undefined?limitedResponse(response,maxBytes):response;}catch(error){last=error;if(attempt+1>=attempts||!retryable(error))throw error;await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));}finally{linked.dispose();}}throw last instanceof Error?last:new Error('Request failed');}
+  async text(request:BrokerRequest):Promise<string>{let response=await this.request(request);if(response.ok)return decodeText(response);const canTryLiveUa=request.sourceId.startsWith('live:')&&!hasHeader(request.headers,'User-Agent')&&(response.status===401||response.status===403);if(canTryLiveUa){await response.body?.cancel();for(const userAgent of liveCompatibilityUserAgents){response=await this.request({...request,headers:{...(request.headers??{}),'User-Agent':userAgent},retries:0});if(response.ok)return decodeText(response);await response.body?.cancel();if(response.status!==401&&response.status!==403)break;}}throw new Error(`HTTP ${response.status} for source request`);}
   async json<T>(request:BrokerRequest):Promise<T>{return JSON.parse(await this.text(request)) as T;}
   async jsonPost<T>(request:BrokerRequest,payload:unknown):Promise<T>{return this.json<T>({...request,method:'POST',headers:{'content-type':'application/json',...(request.headers??{})},body:JSON.stringify(payload)});}
-  async measure(request:BrokerRequest):Promise<BrokerMetric>{const started=performance.now();try{const response=await this.request({...request,timeoutMs:request.timeoutMs??8_000});let bytes=0;if(response.body){const reader=response.body.getReader();while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>=256*1024){void reader.cancel();break;}}}return{ok:response.ok,status:response.status,latencyMs:Math.round(performance.now()-started),bytes};}catch{return{ok:false,status:0,latencyMs:Math.round(performance.now()-started),bytes:0};}}
+  async #readProbeBytes(response:Response,maxBytes=LIVE_PROBE_BYTES):Promise<number>{let bytes=0;if(!response.body)return bytes;const reader=response.body.getReader();while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>=maxBytes){void reader.cancel();break;}}return bytes;}
+  async #measureHls(request:BrokerRequest,started:number):Promise<BrokerMetric>{
+    const deadline=Date.now()+LIVE_PROBE_BUDGET_MS;
+    const remaining=()=>Math.max(100,deadline-Date.now());
+    const playlistHeaders=withoutHeader(request.headers,'Range');
+    const playlistRequest:BrokerRequest={...request};
+    if(playlistHeaders)playlistRequest.headers=playlistHeaders;else delete playlistRequest.headers;
+    playlistRequest.retries=0;
+    let response=await this.request({...playlistRequest,timeoutMs:remaining(),maxBytes:512*1024});
+    if(!response.ok)return{ok:false,status:response.status,latencyMs:Math.round(performance.now()-started),bytes:0};
+    let base=response.url||request.url;
+    let text=await response.text();
+    let media=firstPlaylistUri(text);
+    if(!media)return{ok:true,status:response.status,latencyMs:Math.round(performance.now()-started),bytes:Buffer.byteLength(text)};
+    let mediaUrl=resolveUrl(base,media);
+    if(/\.m3u8(?:$|[?#])/i.test(mediaUrl)&&remaining()>150){
+      response=await this.request({...playlistRequest,url:mediaUrl,timeoutMs:remaining(),maxBytes:512*1024});
+      if(!response.ok)return{ok:false,status:response.status,latencyMs:Math.round(performance.now()-started),bytes:0};
+      base=response.url||mediaUrl;text=await response.text();media=firstPlaylistUri(text);
+      if(!media)return{ok:true,status:response.status,latencyMs:Math.round(performance.now()-started),bytes:Buffer.byteLength(text)};
+      mediaUrl=resolveUrl(base,media);
+    }
+    const segmentHeaders={...(request.headers??{}),Range:`bytes=0-${LIVE_PROBE_BYTES-1}`};
+    response=await this.request({...request,url:mediaUrl,headers:segmentHeaders,timeoutMs:remaining(),retries:0});
+    const bytes=await this.#readProbeBytes(response);
+    return{ok:response.ok,status:response.status,latencyMs:Math.round(performance.now()-started),bytes};
+  }
+  async measure(request:BrokerRequest):Promise<BrokerMetric>{
+    const started=performance.now();
+    try{
+      const liveProbe=request.sourceId==='live-speed';
+      if(liveProbe&&/\.m3u8(?:$|[?#])/i.test(request.url))return await this.#measureHls(request,started);
+      const timeoutMs=liveProbe?Math.min(request.timeoutMs??LIVE_PROBE_BUDGET_MS,LIVE_PROBE_BUDGET_MS):(request.timeoutMs??8_000);
+      const probeRequest:BrokerRequest={...request,timeoutMs};if(liveProbe)probeRequest.retries=0;
+      const response=await this.request(probeRequest);
+      const contentType=(response.headers.get('content-type')??'').toLowerCase();
+      if(liveProbe&&(contentType.includes('mpegurl')||contentType.includes('vnd.apple.mpegurl'))){await response.body?.cancel();return await this.#measureHls(request,started);}
+      const bytes=await this.#readProbeBytes(response,liveProbe?LIVE_PROBE_BYTES:256*1024);
+      return{ok:response.ok,status:response.status,latencyMs:Math.round(performance.now()-started),bytes};
+    }catch{return{ok:false,status:0,latencyMs:Math.round(performance.now()-started),bytes:0};}
+  }
   clearCookies(sourceId:string):void{this.#cookies.clear(sourceId);}
 }
 export function redactSecrets(headers:Record<string,string>):Record<string,string>{const output:Record<string,string>={};for(const[key,value]of Object.entries(headers))output[key]=/cookie|authorization|token|password/i.test(key)?'<redacted>':value;return output;}

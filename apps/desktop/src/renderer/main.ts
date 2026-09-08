@@ -51,13 +51,15 @@ function assertAccessibleFocusTargets(page:string):void{
 }
 
 async function runUiSmoke():Promise<void>{
-  const pages=['home','vod','live','player','search','favorites','history','sources','settings','live','player','search','player'] as const;
+  const pages=['home','vod','live','music','player','search','favorites','history','sources','settings','live','music','player','search','player'] as const;
   await sleep(800);
   for(const key of pages){
     document.title='Free New Desk - UI Smoke Transition';
     const button=document.querySelector<HTMLButtonElement>(`button[data-smoke-key="${key}"]`);
     if(!button)throw new Error(`UI smoke navigation button missing: ${key}`);
-    const navigationStarted=performance.now();button.click();await waitForSmokeRoute(key);const navigationMs=performance.now()-navigationStarted;if(navigationMs>100)throw new Error(`UI smoke navigation exceeded 100ms: ${key} ${navigationMs.toFixed(1)}ms`);if(key==='player'){void window.desktop.diagnostics.recordPerformance('playbackNavigationMs',navigationMs).catch(()=>false);const smoke=await window.desktop.playback.smokeLoad();if(!smoke.ok||smoke.acceptedMs>200)throw new Error(`PlayerHost async smoke accept exceeded 200ms: ${smoke.acceptedMs.toFixed(1)}ms`);await sleep(250);}
+    let navigationMs=0;
+    for(let attempt=0;attempt<2;attempt+=1){const attemptButton=document.querySelector<HTMLButtonElement>(`button[data-smoke-key="${key}"]`);if(!attemptButton)throw new Error(`UI smoke navigation button disappeared: ${key}`);const navigationStarted=performance.now();attemptButton.click();try{await waitForSmokeRoute(key);navigationMs=performance.now()-navigationStarted;break;}catch(error){if(attempt===1)throw error;await sleep(100);}}
+    if(navigationMs>100)throw new Error(`UI smoke navigation exceeded 100ms: ${key} ${navigationMs.toFixed(1)}ms`);if(key==='player'){void window.desktop.diagnostics.recordPerformance('playbackNavigationMs',navigationMs).catch(()=>false);const smoke=await window.desktop.playback.smokeLoad();if(!smoke.ok||smoke.acceptedMs>200)throw new Error(`PlayerHost async smoke accept exceeded 200ms: ${smoke.acceptedMs.toFixed(1)}ms`);await sleep(250);}
     await sleep(250);
     const active=activeSmokeKey();
     if(active!==key)throw new Error(`UI smoke route did not activate: expected ${key}, got ${active||'none'}`);

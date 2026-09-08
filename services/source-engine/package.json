@@ -1,3 +1,19 @@
 {
-  "name":"@free-new-desk/source-engine","version":"1.3.0","private":true,"type":"module","main":"dist/index.js","types":"dist/index.d.ts","scripts":{"build":"tsc -p tsconfig.json","typecheck":"tsc -p tsconfig.json --noEmit"},"dependencies":{"@free-new-desk/contracts":"0.1.0","@free-new-desk/source-adapters":"0.1.0","@free-new-desk/source-sdk":"0.1.0","@free-new-desk/plugin-sdk":"1.3.0"}
+  "name": "@free-new-desk/source-engine",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@free-new-desk/contracts": "0.1.0",
+    "@free-new-desk/plugin-sdk": "1.3.0",
+    "@free-new-desk/source-adapters": "0.1.0",
+    "@free-new-desk/source-sdk": "0.1.0",
+    "es-module-lexer": "1.7.0"
+  }
 }

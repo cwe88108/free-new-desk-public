@@ -82,11 +82,11 @@ npm run smoke:packaged
 powershell -ExecutionPolicy Bypass -File scripts/test-packaged-ui.ps1
 ```
 
-`package:win` 会先构建全部 workspace，再运行 `prepare-runtime-workspaces.mjs`，将内部 `@free-new-desk/*` 包复制到发行 staging 的标准 `node_modules` 布局。Windows GitHub Actions 会编译 x64 PlayerHost、准备固定来源的 LGPL libmpv 运行时、执行 Named Pipe 测试、打包 Setup / Portable、真实启动打包后的应用，并通过 DOM 导航依次渲染和截图首页、点播、直播、搜索、播放器、收藏、历史、来源、设置共 9 个主要页面。只有这些发布门通过后，`main` 才发布 Windows x64 EXE。
+`package:win` 会先构建全部 workspace，再运行 `prepare-runtime-workspaces.mjs`，将内部 `@free-new-desk/*` 包复制到发行 staging 的标准 `node_modules` 布局。公开版发布验证链路会在 Windows x64 环境编译 PlayerHost、准备固定来源的 LGPL libmpv 运行时、执行 Named Pipe 测试、打包 Setup / Portable、真实启动打包后的应用，并通过 DOM 导航验证主要页面。公开仓库不附带私有 CI 工作流，发行包由本地完成上述发布门后上传到 GitHub Release。
 
 ## 发布与更新
 
-应用只检查并打开本仓库自己的 Releases：`cwe88108/free-new-desk-public`。当前公共版本为 **v1.4.9**；发布标签使用 SemVer，例如 `v1.4.9`。公共版发行包在本地 Windows 环境编译后上传到对应 GitHub Release。
+应用只检查并打开本仓库自己的 Releases：`cwe88108/free-new-desk-public`。当前公共版本为 **v1.4.12**；发布标签使用 SemVer，例如 `v1.4.12`。公共版发行包在本地 Windows 环境编译后上传到对应 GitHub Release。
 
 ## 许可证与第三方组件
 

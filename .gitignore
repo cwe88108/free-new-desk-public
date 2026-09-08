@@ -14,3 +14,4 @@ coverage/
 !.env.example
 native/player-host/build/
 third_party/mpv/win-x64/*.dll
+assets/app-icon.ico

@@ -88,7 +88,5 @@ try {
   Stop-ProcessTree $second
   Stop-ProcessTree $primary
   Stop-ProcessTree $recovered
-  Get-Process -Name 'Free New Desk' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Get-Process -Name 'player-host' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Remove-Item -Recurse -Force $profile -ErrorAction SilentlyContinue
+  Write-Host "Lifecycle data retained for diagnosis: $profile"
 }

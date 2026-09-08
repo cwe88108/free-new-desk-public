@@ -29,12 +29,12 @@ Free New Desk 是一个面向 **Windows 11 x64** 的 TVBox / FongMi 风格桌面
 
 **1. 下载**
 
-前往 [Releases](../../releases) 下载 v1.4.9 的 Windows x64 安装包：
+前往 [Releases](../../releases) 下载 v1.4.12 的 Windows x64 安装包：
 
 | 包 | 用途 |
 | --- | --- |
-| `Free New Desk-Setup-1.4.9-x64.exe` | NSIS 安装版（推荐，支持自动更新） |
-| `Free New Desk-Portable-1.4.9-x64.exe` | 绿色版（无需安装，解压即用） |
+| `Free New Desk-Setup-1.4.12-x64.exe` | NSIS 安装版（推荐，支持自动更新） |
+| `Free New Desk-Portable-1.4.12-x64.exe` | 绿色版（无需安装，解压即用） |
 
 **2. 安装**
 
@@ -58,6 +58,8 @@ Free New Desk 是一个面向 **Windows 11 x64** 的 TVBox / FongMi 风格桌面
 - **直播**：M3U / TXT / JSON、IPTV 频道、线路回退、XMLTV / gzip EPG、节目预约与直播收藏
 - **搜索聚合**：多源并发检索，结果只显示可播放条目
 - **播放器**：硬件解码、字幕 / 音轨 / 倍速 / 画面比例 / 截图 / 全屏 / PiP / 播放队列
+- **音乐**：本地 / SMB / WebDAV 音乐库、封面、在线歌词与播放进度同步
+- **Drpy2**：独立 Worker、受控 ESM 依赖加载、宿主解析器与网络边界增强
 - **来源管理**：分组启用、整组启停、批量替换、健康检测、Source Audit / JSON 审计报告导出
 - **设置**：稳定版 / 每日更新通道、缓存分项清理、日志目录、JVM / Plugin / libmpv 诊断
 - **自动更新**：仅检查本仓库 GitHub Releases；安装版支持自更新
@@ -86,7 +88,7 @@ Free New Desk 是站在巨人肩膀上的空壳播放器，依赖以下开源生
 ## 反馈与贡献
 
 - Bug 反馈与功能建议：[Issues](../../issues)
-- 当前快照版本：**v1.4.9**（2026-09-05）
+- 当前快照版本：**v1.4.12**（2026-09-09）
 - 公共发布仓库：本仓库
 
 ## 许可证

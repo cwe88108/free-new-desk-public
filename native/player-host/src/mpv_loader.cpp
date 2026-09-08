@@ -11,6 +11,28 @@ constexpr int MPV_EVENT_COMMAND_REPLY=5;
 constexpr int MPV_EVENT_START_FILE=6;
 constexpr int MPV_EVENT_END_FILE=7;
 constexpr int MPV_EVENT_FILE_LOADED=8;
+constexpr int MPV_END_FILE_REASON_EOF=0;
+constexpr int MPV_END_FILE_REASON_STOP=2;
+constexpr int MPV_END_FILE_REASON_QUIT=3;
+constexpr int MPV_END_FILE_REASON_ERROR=4;
+constexpr int MPV_END_FILE_REASON_REDIRECT=5;
+constexpr const char* FND_SEGMENT_MARKER="#fnd-segment=";
+std::string end_reason_name(int reason){
+  switch(reason){
+    case MPV_END_FILE_REASON_EOF:return "eof";
+    case MPV_END_FILE_REASON_STOP:return "stop";
+    case MPV_END_FILE_REASON_QUIT:return "quit";
+    case MPV_END_FILE_REASON_ERROR:return "error";
+    case MPV_END_FILE_REASON_REDIRECT:return "redirect";
+    default:return "unknown";
+  }
+}
+struct SegmentLoad{std::string url;std::string options;};
+SegmentLoad parse_segment_load(const std::string& input){
+  const auto marker=input.rfind(FND_SEGMENT_MARKER);if(marker==std::string::npos)return{input,{}};
+  const auto payload=input.substr(marker+std::char_traits<char>::length(FND_SEGMENT_MARKER));const auto comma=payload.find(',');if(comma==std::string::npos)return{input,{}};
+  const auto start=payload.substr(0,comma),end=payload.substr(comma+1);try{const double startValue=std::stod(start);if(startValue<0)return{input,{}};std::ostringstream options;options<<"start="<<startValue;if(!end.empty()){const double endValue=std::stod(end);if(endValue<=startValue)return{input,{}};options<<",end="<<endValue;}return{input.substr(0,marker),options.str()};}catch(...){return{input,{}};}
+}
 }
 
 MpvLoader::~MpvLoader(){
@@ -50,13 +72,14 @@ bool MpvLoader::initialize(const std::filesystem::path& dllPath,std::string& err
   setOption(handle_,"hwdec","auto-safe");
   setOption(handle_,"vo","gpu-next");
   setOption(handle_,"gpu-api","d3d11");
-  setOption(handle_,"force-window",nullAudioOutput?"immediate":"yes");
+  setOption(handle_,"force-window","immediate");
   setOption(handle_,"keep-open","yes");
   setOption(handle_,"cache","yes");
   setOption(handle_,"demuxer-max-bytes","512MiB");
   setOption(handle_,"target-colorspace-hint","yes");
   setOption(handle_,"input-default-bindings","yes");
-  setOption(handle_,"osc","no");
+  setOption(handle_,"input-cursor","yes");
+  setOption(handle_,"osc","yes");
   if(nullAudioOutput)setOption(handle_,"ao","null");
   const int result=initialize(handle_);
   if(result<0){error=errorMessage("mpv_initialize",result);return false;}
@@ -114,8 +137,8 @@ bool MpvLoader::startLoad(const std::string& url,const std::string& headerFields
     if(!setProperty("http-header-fields",headerFields,error)){failCurrentLoad(error);return false;}
     headerFields_=headerFields;
   }
-  const char* args[]={"loadfile",url.c_str(),"replace",nullptr};
-  const int result=commandAsync_(handle_,generation,args);
+  const auto segment=parse_segment_load(url);std::vector<std::string> values={"loadfile",segment.url,"replace"};if(!segment.options.empty())values.push_back(segment.options);std::vector<const char*> args;args.reserve(values.size()+1);for(const auto& value:values)args.push_back(value.c_str());args.push_back(nullptr);
+  const int result=commandAsync_(handle_,generation,args.data());
   if(result<0){error=errorMessage("mpv_command_async",result);failCurrentLoad(error);return false;}
   return true;
 }
@@ -158,18 +181,26 @@ void MpvLoader::eventLoop(){
     }
     if(event->event_id==MPV_EVENT_END_FILE){
       int code=event->error;
+      int reason=-1;
       if(event->data){
         const auto* end=static_cast<const mpv_event_end_file_head*>(event->data);
+        reason=end->reason;
         if(end->error<0)code=end->error;
       }
       std::lock_guard<std::mutex> lock(loadMutex_);
       if(!loadStarted_)continue;
-      if(code<0){
+      if(code<0||reason==MPV_END_FILE_REASON_ERROR){
         loadStatus_="failed";
-        loadError_=errorMessage("mpv media open",code);
+        loadError_=errorMessage("mpv media",code<0?code:-1);
+      }else if(reason==MPV_END_FILE_REASON_EOF){
+        loadStatus_="ended";
+        loadError_="eof";
+      }else if(loadStatus_=="loaded"){
+        loadStatus_="ended";
+        loadError_=end_reason_name(reason);
       }else if(loadStatus_=="loading"){
         loadStatus_="ended";
-        loadError_="media ended before FILE_LOADED";
+        loadError_=end_reason_name(reason)+"-before-loaded";
       }
       loadStarted_=false;
     }

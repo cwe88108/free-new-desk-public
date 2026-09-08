@@ -1,11 +1,12 @@
 {
   "name": "free-new-desk",
-  "version": "1.4.9",
+  "version": "1.4.12",
+  "private": true,
   "description": "Windows 11 x64 desktop media platform with TVBox/FongMi-compatible source architecture.",
   "type": "module",
-  "main": "apps/desktop/dist/main/index.js",
+  "main": "apps/desktop/dist/main/bootstrap.js",
   "author": "cwe88108",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "UNLICENSED",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -16,7 +17,7 @@
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build:desktop",
-    "build:packages": "npm run build -w @free-new-desk/contracts && npm run build -w @free-new-desk/source-sdk && npm run build -w @free-new-desk/plugin-sdk && npm run build -w @free-new-desk/source-adapters && npm run build -w @free-new-desk/catvod-runtime-shim && npm run build -w @free-new-desk/tvbox-config && npm run build -w @free-new-desk/live-parser && npm run build -w @free-new-desk/epg-parser && npm run build -w @free-new-desk/data-service && npm run build -w @free-new-desk/proxy-service && npm run build -w @free-new-desk/spider-worker && npm run build -w @free-new-desk/plugin-host && npm run build -w @free-new-desk/jvm-spider-host && npm run build -w @free-new-desk/source-engine",
+    "build:packages": "npm run build -w @free-new-desk/contracts && npm run build -w @free-new-desk/source-sdk && npm run build -w @free-new-desk/plugin-sdk && npm run build -w @free-new-desk/source-adapters && npm run build -w @free-new-desk/catvod-runtime-shim && npm run build -w @free-new-desk/tvbox-config && npm run build -w @free-new-desk/live-parser && npm run build -w @free-new-desk/epg-parser && npm run build -w @free-new-desk/data-service && npm run build -w @free-new-desk/proxy-service && npm run build -w @free-new-desk/spider-worker && npm run build -w @free-new-desk/plugin-host && npm run build -w @free-new-desk/jvm-spider-host && npm run build -w @free-new-desk/drpy2-worker && npm run build -w @free-new-desk/source-engine",
     "build:desktop": "npm run build -w @free-new-desk/desktop",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "lint": "node scripts/lint.mjs",
@@ -25,11 +26,14 @@
     "dev": "npm run dev -w @free-new-desk/desktop",
     "player:configure": "cmake -S native/player-host -B native/player-host/build -A x64",
     "player:build": "cmake --build native/player-host/build --config Release",
+    "prepare:icons": "node scripts/materialize-app-icons.mjs",
+    "prepare:mpv": "node scripts/ensure-mpv-runtime.mjs",
     "prepare:runtime": "node scripts/prepare-runtime-workspaces.mjs",
-    "package:win": "npm run build && npm run prepare:runtime && electron-builder --win nsis portable --x64 --publish never",
+    "package:win": "npm run prepare:icons && npm run prepare:mpv && npm run build && npm run prepare:runtime && electron-builder --win nsis portable --x64 --publish never",
     "smoke:packaged": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-packaged-app.ps1"
   },
   "dependencies": {
+    "music-metadata": "11.15.0",
     "pinia": "3.0.3",
     "vue": "3.5.20",
     "vue-router": "4.5.1",
@@ -61,6 +65,8 @@
       "services/proxy-service/package.json",
       "services/spider-worker/dist/**/*",
       "services/spider-worker/package.json",
+      "services/drpy2-worker/dist/**/*",
+      "services/drpy2-worker/package.json",
       "services/plugin-host/dist/**/*",
       "services/plugin-host/package.json",
       "packages/*/dist/**/*",
@@ -72,7 +78,8 @@
           "**/*"
         ]
       },
-      "package.json"
+      "package.json",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
       {
@@ -90,9 +97,18 @@
       {
         "from": "services/jvm-spider-host/dist/jvm-spider-host.jar",
         "to": "jvm/jvm-spider-host.jar"
+      },
+      {
+        "from": "assets/app-icon.png",
+        "to": "assets/app-icon.png"
+      },
+      {
+        "from": "assets/app-icon.ico",
+        "to": "assets/app-icon.ico"
       }
     ],
     "win": {
+      "icon": "assets/app-icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -110,6 +126,9 @@
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "installerIcon": "assets/app-icon.ico",
+      "uninstallerIcon": "assets/app-icon.ico",
+      "installerHeaderIcon": "assets/app-icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

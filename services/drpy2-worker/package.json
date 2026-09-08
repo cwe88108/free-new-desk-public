@@ -1,0 +1,9 @@
+{
+  "name":"@free-new-desk/drpy2-worker",
+  "version":"1.0.0",
+  "private":true,
+  "type":"module",
+  "main":"dist/worker.js",
+  "scripts":{"build":"tsc -p tsconfig.json","typecheck":"tsc -p tsconfig.json --noEmit"},
+  "dependencies":{"@free-new-desk/catvod-runtime-shim":"0.1.0"}
+}
