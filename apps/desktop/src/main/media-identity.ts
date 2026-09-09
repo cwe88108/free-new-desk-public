@@ -1,36 +1,21 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type MediaIdentity=
-  | {kind:'local-file';canonicalPath:string}
-  | {kind:'unc-file';canonicalPath:string}
-  | {kind:'url';canonicalUrl:string};
-
-function normalizeWindowsPath(value:string):string{
-  return path.win32.normalize(value)
-    .replace(/\\/g,'/')
-    .replace(/\/$/,'')
-    .toLocaleLowerCase('en-US');
+/** Path normalization is not an authorization check or a substitute for load identity. */
+export function mediaIdentity(input:string):string|undefined {
+  // Only our CUE transport suffix is removed, never arbitrary URL query parameters.
+  const value=input.replace(/#fnd-segment=\d+(?:\.\d+)?,(?:\d+(?:\.\d+)?)?$/,'');
+  const local=(v:string)=>`file:${path.win32.normalize(v).replace(/\\/g,'/').toLowerCase()}`;
+  if (/^\\\\[?.]\\/.test(value)) return undefined; // extended/device paths need explicit support
+  if (/^[a-z]:[\\/]/i.test(value)||/^\\\\[^\\]+\\[^\\]+/.test(value)) return local(value);
+  try {
+    const url=new URL(value);
+    if(url.protocol==='file:')return local(fileURLToPath(url,{windows:true}));
+    if(url.protocol==='http:'||url.protocol==='https:')return `url:${url.href}`;
+  } catch { /* unknown identity is rejected, never decoded a second time */ }
+  return undefined;
 }
-
-export function identifyMedia(value:string):MediaIdentity{
-  const input=value.trim();
-  if(/^[A-Za-z]:[\\/]/.test(input))return{kind:'local-file',canonicalPath:normalizeWindowsPath(input)};
-  if(/^\\\\/.test(input))return{kind:'unc-file',canonicalPath:normalizeWindowsPath(input)};
-  if(/^file:/i.test(input))return{kind:'local-file',canonicalPath:normalizeWindowsPath(fileURLToPath(input))};
-  try{
-    const url=new URL(input);
-    url.hash='';
-    return{kind:'url',canonicalUrl:decodeURI(url.toString()).replace(/\/$/,'')};
-  }catch{
-    return{kind:'local-file',canonicalPath:normalizeWindowsPath(decodeURI(input))};
-  }
-}
-
-export function sameMediaPath(actual:string|undefined,expected:string):boolean{
-  if(!actual)return false;
-  const a=identifyMedia(actual),b=identifyMedia(expected);
-  if(a.kind==='url'&&b.kind==='url')return a.canonicalUrl===b.canonicalUrl;
-  if(a.kind==='url'||b.kind==='url')return false;
-  return a.canonicalPath===b.canonicalPath;
+export function sameMediaPath(actual:string|undefined,expected:string):boolean {
+  const a=actual?mediaIdentity(actual):undefined,b=mediaIdentity(expected);
+  return a!==undefined&&b!==undefined&&a===b;
 }

@@ -1,6 +1,6 @@
 {
   "name": "free-new-desk",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "private": true,
   "description": "Windows 11 x64 desktop media platform with TVBox/FongMi-compatible source architecture.",
   "type": "module",
@@ -105,6 +105,10 @@
       {
         "from": "assets/app-icon.ico",
         "to": "assets/app-icon.ico"
+      },
+      {
+        "from": "native/player-host/build/Release/smb-helper.exe",
+        "to": "native/player-host/smb-helper.exe"
       }
     ],
     "win": {

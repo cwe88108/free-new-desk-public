@@ -2,11 +2,11 @@ import { app,BrowserWindow,ipcMain,type IpcMainInvokeEvent } from 'electron';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { appendFile,mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { mediaIdentity,sameMediaPath } from './media-identity.js';
 import type { PlaybackDomain,PlaybackHistoryEntry,PlaybackInitiator,PlaybackSessionSnapshot,PlayRequest,PlayerLoadStatus,PlayerQuery,PlayerStats,PlayerTrack } from '@free-new-desk/contracts';
 import { DataService } from '@free-new-desk/data-service';
 import { beginPlayerRuntimeSession,failPlayerRuntimeSession,getCurrentPlayerClient,getPlayerRuntimeSession,isPlayerRuntimeCurrent,onPlayerRuntimeSession,patchPlayerRuntimeSession } from './player-client.js';
 import { canUpdateVodHistory,validateVodAutoNext,type HistoryIdentity } from './playback-session-rules.js';
-import { sameMediaPath } from './media-identity.js';
 
 type InvokeListener=(event:IpcMainInvokeEvent,...args:unknown[])=>unknown;
 type CommandResult={ok:boolean;detail?:string};
@@ -24,7 +24,6 @@ const invokeStorage=new AsyncLocalStorage<InvokeIntent>();
 const naturalEndClaims=new Map<string,NaturalEndClaim>();
 const hookedPlayers=new WeakSet<object>();
 const mediaExpectations=new WeakMap<object,MediaExpectation>();
-const statsPathMismatches=new WeakMap<object,{loadId:string;count:number}>();
 const historyIdentityById=new Map<string,HistoryIdentity>();
 const latestHistoryByMedia=new Map<string,string>();
 const rawHandle=(ipcMain as unknown as {handle:(channel:string,listener:InvokeListener)=>void}).handle.bind(ipcMain);
@@ -62,14 +61,14 @@ function ensurePlayerHooks():void{
     const result=await originalQuery(query);
     if(query==='stats'&&result&&typeof result==='object'&&!Array.isArray(result)){
       const stats=result as PlayerStats,expected=mediaExpectations.get(player),current=copySession(),out={...stats} as PlayerStats&Record<string,unknown>;
-      if(expected&&current.loadId===expected.loadId&&current.requestId===expected.requestId){if(!sameMediaPath(stats.path,expected.url)){const previous=statsPathMismatches.get(player),count=previous?.loadId===expected.loadId?previous.count+1:1;statsPathMismatches.set(player,{loadId:expected.loadId,count});out.width=0;out.height=0;out.fps=0;out.videoFormat='';if(current.domain!=='music'||count>=2){out.position=0;out.duration=0;out.domain=null;out.requestId='';}}else statsPathMismatches.delete(player);}
+      if(expected&&current.loadId===expected.loadId&&current.requestId===expected.requestId){const identity=mediaIdentity(expected.url);if(identity?.startsWith('file:')&&!sameMediaPath(stats.path,expected.url))throw new Error('[PLAYBACK_STATS_PENDING] 本地媒体身份尚未确认');}
       return out;
     }
     return result;
   };
 }
 
-async function verifyNaturalEnd(session:PlaybackSessionSnapshot):Promise<{key:string}|undefined>{if(!session.requestId||!session.loadId||(session.domain!=='vod'&&session.domain!=='music'))return;ensurePlayerHooks();const player=getCurrentPlayerClient();if(!player)return;const state=await (player as unknown as PlayerLike).query('load-status').catch(()=>undefined),current=copySession();if(current.requestId!==session.requestId||current.loadId!==session.loadId||current.domain!==session.domain)return;if(!state||Array.isArray(state)||!('loadId' in state)||state.loadId!==session.loadId||state.status!=='ended'||state.error!=='eof')return;return{key:`${session.generation}:${session.requestId}:${session.loadId}`};}
+async function verifyNaturalEnd(session:PlaybackSessionSnapshot):Promise<{key:string}|undefined>{if(!session.requestId||!session.loadId||(session.domain!=='vod'&&session.domain!=='music'))return;ensurePlayerHooks();const player=getCurrentPlayerClient();if(!player)return;const state=await (player as unknown as PlayerLike).query('load-status').catch(()=>undefined),current=copySession();if(current.requestId!==session.requestId||current.loadId!==session.loadId||current.domain!==session.domain)return;if(!state||Array.isArray(state)||!('status' in state)||!('loadId' in state)||state.loadId!==session.loadId||state.status!=='ended'||state.error!=='eof')return;return{key:`${session.generation}:${session.requestId}:${session.loadId}`};}
 async function preclaimNaturalEnd(domain:'vod'|'music',owner:number,requestId?:string,loadId?:string):Promise<boolean>{const session=copySession();if(session.domain!==domain||(requestId&&session.requestId!==requestId)||(loadId&&session.loadId!==loadId))return false;const verified=await verifyNaturalEnd(session);if(!verified)return false;const existing=naturalEndClaims.get(verified.key);if(existing)return false;naturalEndClaims.set(verified.key,{owner,stage:'claimed'});pruneClaims();logSession('natural eof claimed',{fromDomain:domain,toDomain:domain,requestId:session.requestId,loadId:session.loadId,windowId:owner,accepted:true,endReason:'eof'});return true;}
 async function consumeNaturalEndForAutoNext(domain:'vod'|'music',owner:number,input:Record<string,unknown>):Promise<PlaybackSessionSnapshot>{const session=copySession();if(session.domain!==domain||!session.requestId||!session.loadId){logSession('auto-next rejected',{fromDomain:session.domain,toDomain:domain,windowId:owner,accepted:false,rejectedReason:'no-current-natural-end'});throw new Error('[PLAYBACK_SUPERSEDED] 当前播放会话已变化，已取消自动续播');}
   if(domain==='vod'){

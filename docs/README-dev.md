@@ -86,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File scripts/test-packaged-ui.ps1
 
 ## 发布与更新
 
-应用只检查并打开本仓库自己的 Releases：`cwe88108/free-new-desk-public`。当前公共版本为 **v1.4.12**；发布标签使用 SemVer，例如 `v1.4.12`。公共版发行包在本地 Windows 环境编译后上传到对应 GitHub Release。
+应用只检查并打开本仓库自己的 Releases：`cwe88108/free-new-desk-public`。当前公共版本为 **v1.4.13**；发布标签使用 SemVer，例如 `v1.4.13`。公共版发行包在本地 Windows 环境编译后上传到对应 GitHub Release。
 
 ## 许可证与第三方组件
 

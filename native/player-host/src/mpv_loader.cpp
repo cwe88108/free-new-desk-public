@@ -4,7 +4,8 @@
 struct mpv_event { int event_id; int error; std::uint64_t reply_userdata; void* data; };
 
 namespace {
-struct mpv_event_end_file_head { int reason; int error; };
+struct mpv_event_start_file_head { std::int64_t playlist_entry_id; };
+struct mpv_event_end_file_head { int reason; int error; std::int64_t playlist_entry_id; };
 constexpr int MPV_EVENT_NONE=0;
 constexpr int MPV_EVENT_SHUTDOWN=1;
 constexpr int MPV_EVENT_COMMAND_REPLY=5;
@@ -123,29 +124,32 @@ void MpvLoader::failCurrentLoad(const std::string& message){
 
 bool MpvLoader::startLoad(const std::string& url,const std::string& headerFields,std::string& loadId,std::string& error){
   if(!handle_||!waitEvent_||!commandAsync_){error="libmpv event API is unavailable";return false;}
-  std::uint64_t generation=0;
-  {
-    std::lock_guard<std::mutex> lock(loadMutex_);
-    generation=++loadGeneration_;
-    loadId_=std::to_string(generation);
-    loadId=loadId_;
-    loadStatus_="loading";
-    loadError_.clear();
-    loadStarted_=false;
-  }
+  std::lock_guard<std::mutex> lock(loadMutex_);
+  loadId_=std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64())+"-"+std::to_string(++loadGeneration_);loadId=loadId_;
+  loadStatus_="loading";loadError_.clear();loadStarted_=false;activeEntryId_=-1;
   if(headerFields_!=headerFields){
-    if(!setProperty("http-header-fields",headerFields,error)){failCurrentLoad(error);return false;}
+    if(!setProperty("http-header-fields",headerFields,error)){loadStatus_="failed";loadError_=error;return false;}
     headerFields_=headerFields;
   }
-  const auto segment=parse_segment_load(url);std::vector<std::string> values={"loadfile",segment.url,"replace"};if(!segment.options.empty())values.push_back(segment.options);std::vector<const char*> args;args.reserve(values.size()+1);for(const auto& value:values)args.push_back(value.c_str());args.push_back(nullptr);
-  const int result=commandAsync_(handle_,generation,args.data());
-  if(result<0){error=errorMessage("mpv_command_async",result);failCurrentLoad(error);return false;}
+  const auto segment=parse_segment_load(url);
+  std::vector<std::string> values={"loadfile",segment.url,"replace"};
+  if(!segment.options.empty()){values.push_back("-1");values.push_back(segment.options);}
+  if(!command(values,error)){loadStatus_="failed";loadError_=error;return false;}
+  std::string entry;
+  if(!getProperty("playlist/0/id",entry,error)){loadStatus_="failed";loadError_=error;return false;}
+  try{activeEntryId_=std::stoll(entry);}catch(...){error="Invalid mpv playlist entry ID";loadStatus_="failed";loadError_=error;return false;}
+
   return true;
 }
 
 MpvLoadState MpvLoader::loadState()const{
   std::lock_guard<std::mutex> lock(loadMutex_);
   return{loadId_,loadStatus_,loadError_};
+}
+
+bool MpvLoader::sampleReady()const{
+  std::lock_guard<std::mutex> lock(loadMutex_);
+  return loadStatus_=="loaded"&&loadStarted_&&eventEntryId_==activeEntryId_;
 }
 
 void MpvLoader::eventLoop(){
@@ -164,6 +168,8 @@ void MpvLoader::eventLoop(){
     }
     if(event->event_id==MPV_EVENT_START_FILE){
       std::lock_guard<std::mutex> lock(loadMutex_);
+      eventEntryId_=event->data?static_cast<const mpv_event_start_file_head*>(event->data)->playlist_entry_id:-1;
+      if(eventEntryId_!=activeEntryId_)continue;
       loadStarted_=true;
       loadStatus_="loading";
       loadError_.clear();
@@ -171,7 +177,7 @@ void MpvLoader::eventLoop(){
     }
     if(event->event_id==MPV_EVENT_FILE_LOADED){
       std::lock_guard<std::mutex> lock(loadMutex_);
-      if(loadStarted_){loadStatus_="loaded";loadError_.clear();}
+      if(loadStarted_&&eventEntryId_==activeEntryId_){loadStatus_="loaded";loadError_.clear();}
       continue;
     }
     if(event->event_id==MPV_EVENT_SHUTDOWN){
@@ -188,7 +194,7 @@ void MpvLoader::eventLoop(){
         if(end->error<0)code=end->error;
       }
       std::lock_guard<std::mutex> lock(loadMutex_);
-      if(!loadStarted_)continue;
+      if(!loadStarted_||!event->data||static_cast<const mpv_event_end_file_head*>(event->data)->playlist_entry_id!=activeEntryId_)continue;
       if(code<0||reason==MPV_END_FILE_REASON_ERROR){
         loadStatus_="failed";
         loadError_=errorMessage("mpv media",code<0?code:-1);

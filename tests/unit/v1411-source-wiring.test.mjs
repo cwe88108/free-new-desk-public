@@ -30,7 +30,11 @@ test('first-frame sampling cannot use dimensions from the previous media path',(
   const source=read('apps/desktop/src/main/playback-session-ipc.ts');
   assert.match(source,/mediaExpectations/);
   assert.match(source,/sameMediaPath/);
-  assert.match(source,/out\.width=0;out\.height=0/);
+  const client=read('apps/desktop/src/main/player-client.ts');
+  assert.match(client,/sampleValid/);
+  assert.match(client,/hostEpoch/);
+  assert.match(client,/sampleSeq/);
+  assert.match(client,/PLAYBACK_STATS_PENDING/);
   assert.match(read('apps/desktop/src/main/index.ts'),/videoMetadataReadyMs/);
 });
 

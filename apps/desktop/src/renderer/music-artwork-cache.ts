@@ -9,7 +9,7 @@ function limited<T>(task:()=>Promise<T>):Promise<T>{return new Promise<T>((resol
 export function loadMusicArtwork(trackId:string,online=true):Promise<string|undefined>{
   if(!trackId)return Promise.resolve(undefined);
   const key=`${online?'online':'local'}:${trackId}`,existing=artworkCache.get(key);if(existing)return existing;
-  const request=limited(()=>window.desktop.music.artwork(trackId,{online})).catch(()=>undefined);
+  const request=limited(()=>window.desktop.music.artwork(trackId)).catch(()=>undefined);
   artworkCache.set(key,request);return request;
 }
 
