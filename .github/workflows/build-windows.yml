@@ -1,0 +1,113 @@
+name: Windows x64 Build
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify TypeScript and tests
+        run: npm run verify
+      - name: Configure PlayerHost x64
+        run: cmake -S native/player-host -B native/player-host/build -A x64
+      - name: Build PlayerHost x64
+        run: cmake --build native/player-host/build --config Release
+      - name: Prepare pinned LGPL libmpv runtime
+        shell: pwsh
+        run: ./scripts/prepare-mpv.ps1
+      - name: Test PlayerHost Named Pipe
+        shell: pwsh
+        run: ./scripts/test-player-host.ps1
+      - name: Validate controlled video seek and clock
+        shell: pwsh
+        run: ./scripts/test-player-host-video.ps1
+      - name: Stress PlayerHost 100 media switches
+        shell: pwsh
+        run: ./scripts/test-player-host-switch-stress.ps1
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Package Windows x64
+        run: npm run package:win
+      - name: Smoke test packaged Electron renderer
+        run: npm run smoke:packaged
+      - name: Test packaged lifecycle and recovery
+        shell: pwsh
+        run: ./scripts/test-windows-lifecycle.ps1
+      - name: Smoke test packaged UI at 100% DPI
+        shell: pwsh
+        run: |
+          $env:FND_DPI_SCALE = '1'
+          $env:FND_CAPTURE_IMAGES = '1'
+          ./scripts/test-packaged-ui.ps1
+      - name: Smoke test packaged UI at 125% DPI
+        shell: pwsh
+        run: |
+          $env:FND_DPI_SCALE = '1.25'
+          $env:FND_CAPTURE_IMAGES = '0'
+          ./scripts/test-packaged-ui.ps1
+      - name: Smoke test packaged UI at 150% DPI and high contrast
+        shell: pwsh
+        run: |
+          $env:FND_DPI_SCALE = '1.5'
+          $env:FND_HIGH_CONTRAST = '1'
+          $env:FND_CAPTURE_IMAGES = '0'
+          ./scripts/test-packaged-ui.ps1
+      - name: Resolve package version
+        id: package_version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Upload 100% DPI UI evidence
+        if: always() && hashFiles('dist/ui-smoke/*.jpg') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: v${{ steps.package_version.outputs.version }}-ui-smoke-100dpi
+          path: dist/ui-smoke/*.jpg
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify Windows x64 package exists
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem 'dist/releases/*.exe' -ErrorAction Stop)
+          if ($packages.Count -lt 1) {
+            throw 'No Windows x64 package was produced.'
+          }
+          $packages | ForEach-Object { Write-Host "Package ready: $($_.FullName)" }
+      - name: Publish Windows x64 package to GitHub Release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $title = "Free New Desk v$version"
+
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo "${{ github.repository }}" --target "${{ github.sha }}" --title $title --generate-notes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create release $tag."
+            }
+          }
+
+          $packages = @(Get-ChildItem 'dist/releases/*.exe' -ErrorAction Stop)
+          foreach ($package in $packages) {
+            gh release upload $tag $package.FullName --repo "${{ github.repository }}" --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to upload $($package.Name) to release $tag."
+            }
+          }

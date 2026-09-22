@@ -99,7 +99,8 @@ try {
   $watch = [System.Diagnostics.Stopwatch]::StartNew()
   $stats = Invoke-PlayerHostRequest @{ id = 'ci-stats'; method = 'player.query'; params = @{ query = 'stats' } }
   $watch.Stop()
-  if ($watch.ElapsedMilliseconds -gt 200 -or $stats -notmatch '"position"') { throw "PlayerHost stats responsiveness failed: $($watch.ElapsedMilliseconds)ms $stats" }
+  $statsParsed = $stats | ConvertFrom-Json
+  if ($watch.ElapsedMilliseconds -gt 200 -or $stats -notmatch '"position"' -or -not $statsParsed.result.sampleValid -or $null -eq $statsParsed.result.samplePositionStable -or -not $statsParsed.result.hostEpoch -or -not $statsParsed.result.loadId) { throw "PlayerHost stats identity/stability contract failed: $($watch.ElapsedMilliseconds)ms $stats" }
 
   $liveLoad = Invoke-PlayerHostRequest @{ id = 'ci-load-live-profile'; method = 'player.load'; params = @{ url = $mediaUri; profile = 'live' } }
   $liveAccepted = $liveLoad | ConvertFrom-Json

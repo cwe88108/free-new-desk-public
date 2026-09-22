@@ -44,7 +44,7 @@ onMounted(reload);
   <section class="page history-page">
     <div class="page-heading split"><div><h1>播放历史</h1><p>继续观看、筛选和清理本机播放记录；播放进度来自 PlayerHost 的真实状态。</p></div><span class="count-label">{{visible.length}} / {{history.length}} 条</span></div>
     <div class="history-toolbar">
-      <div class="segmented"><button class="active">全部</button><button disabled title="直播播放记录将在直播历史模型落库后启用">点播</button><button disabled title="直播播放记录将在直播历史模型落库后启用">直播</button></div>
+      <span class="count-label" title="当前历史数据模型只保存点播播放记录">点播历史</span>
       <div class="search-box"><span>⌕</span><input v-model="query" maxlength="100" placeholder="搜索标题、剧集或来源" aria-label="搜索播放历史"/></div>
       <select v-model="source" aria-label="历史来源筛选"><option value="all">全部来源</option><option v-for="item in sources" :key="item[0]" :value="item[0]">{{item[1]}}</option></select>
       <select v-model="sort" aria-label="历史排序"><option value="recent">最近观看</option><option value="name">名称</option><option value="progress">观看进度</option></select>

@@ -15,3 +15,7 @@ coverage/
 native/player-host/build/
 third_party/mpv/win-x64/*.dll
 assets/app-icon.ico
+diagnostics/
+*.dmp
+*.sqlite
+*.db

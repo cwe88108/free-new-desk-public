@@ -42,7 +42,7 @@ test('local music scan retains an offline library, supports cancellation and ded
   const source=read('apps/desktop/src/main/music-service.ts');
   assert.match(source,/scanControllers/);
   assert.match(source,/music:cancelScan/);
-  assert.match(source,/保留上次扫描结果/);
+  assert.match(source,/保留已有音乐/);
   assert.match(source,/pathKey\(item\.root\)===pathKey\(root\)/);
   assert.match(source,/incrementalReuse:true/);
 });

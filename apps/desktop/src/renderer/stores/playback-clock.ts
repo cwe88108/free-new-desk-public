@@ -5,11 +5,12 @@ export const clockRuntime=shallowRef<PlaybackSessionSnapshot>({generation:0,sess
 export const clockLoadStatus=shallowRef<PlayerLoadStatus|null>(null);
 export const clockPosition=ref(0),clockStale=ref(true);
 type SeekState={serial:number;target:number;loadId:string;requestId:string;deadline:number};
+export const clockDiagnostics={rejected:0,reason:'',sampleAgeMs:0};
 let started=false,inFlight:Promise<void>|undefined,anchorAt=0,anchor=0,frame=0,seekSerial=0,seekState:SeekState|undefined;
 function reset(){clockStats.value=null;clockLoadStatus.value=null;anchorAt=0;anchor=0;clockPosition.value=0;clockStale.value=true;seekState=undefined;seekSerial++;}
 function runtime(value:PlaybackSessionSnapshot){const previous=clockRuntime.value;if(value.generation<previous.generation||value.updatedAt<previous.updatedAt)return;if(value.requestId!==previous.requestId||value.loadId!==previous.loadId)reset();clockRuntime.value=value;}
 function acceptSample(sample:PlayerStats,current:PlaybackSessionSnapshot):boolean{
-  if(!sample.sampleValid||!sample.hostEpoch||sample.loadId!==current.loadId||sample.requestId!==current.requestId||!Number.isSafeInteger(sample.sampleSeq))return false;
+  if(!sample.sampleValid||!sample.hostEpoch||sample.loadId!==current.loadId||sample.requestId!==current.requestId||!Number.isSafeInteger(sample.sampleSeq)){clockDiagnostics.rejected++;clockDiagnostics.reason=!sample.sampleValid?'sample-invalid':'session-mismatch';return false;}
   const old=clockStats.value;if(old&&old.hostEpoch===sample.hostEpoch&&(old.sampleSeq??0)>=(sample.sampleSeq??0))return false;
   if(seekState){
     if(seekState.loadId!==current.loadId||seekState.requestId!==current.requestId){seekState=undefined;return false;}
@@ -17,7 +18,7 @@ function acceptSample(sample:PlayerStats,current:PlaybackSessionSnapshot):boolea
     if(Math.abs(sample.position-seekState.target)>tolerance)return false;
     seekState=undefined;
   }
-  clockStats.value=sample;anchor=sample.position;anchorAt=performance.now();clockPosition.value=anchor;clockStale.value=false;return true;
+  clockDiagnostics.reason='';clockStats.value=sample;anchor=sample.position;anchorAt=performance.now();clockPosition.value=anchor;clockStale.value=false;return true;
 }
 export async function refreshPlaybackClock():Promise<void>{
   if(inFlight)return inFlight;
@@ -28,7 +29,7 @@ export async function refreshPlaybackClock():Promise<void>{
   })().finally(()=>{inFlight=undefined;});return inFlight;
 }export function startPlaybackClock(){if(started)return;started=true;window.desktop.playback.onRuntimeSessionChanged(runtime);
   const poll=setInterval(()=>{void refreshPlaybackClock();},275);
-  const tick=()=>{const sample=clockStats.value,age=performance.now()-anchorAt;clockStale.value=!anchorAt||age>1000;
+  const tick=()=>{const sample=clockStats.value,age=performance.now()-anchorAt;clockDiagnostics.sampleAgeMs=Math.round(age);clockStale.value=!anchorAt||age>1000;
     if(seekState){clockPosition.value=seekState.target;}
     else if(!clockStale.value&&sample&&!sample.paused&&!sample.pausedForCache&&clockRuntime.value.status==='playing'&&!document.hidden){const position=anchor+age/1000*sample.speed;clockPosition.value=sample.duration>0?Math.min(sample.duration,position):position;}
     frame=requestAnimationFrame(tick);

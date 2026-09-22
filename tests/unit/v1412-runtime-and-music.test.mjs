@@ -24,22 +24,22 @@ test('v1.4.12 drpy2 worker executes ESM and synchronous broker req without block
  const code=`const host={pdfh,pdfa,pd,joinUrl};export default {init(ext){this.ext=ext;this.rule={title:'Fixture'};return this},getRule(){return this.rule},home(){return {class:[{type_id:'1',type_name:host.pdfh('<b>Demo</b>','b&&Text')}],list:[]}},search(k){const r=req('https://example.com/api',{timeout:3000});return {list:[{vod_id:'1',vod_name:k+' '+r.content}]}}}`;
  const child=fork(new URL('../../services/drpy2-worker/dist/worker.js',import.meta.url),[],{stdio:['ignore','ignore','ignore','ipc'],execArgv:['--experimental-vm-modules']});
  const ask=payload=>new Promise((resolve,reject)=>{const id=randomUUID(),timer=setTimeout(()=>reject(new Error('worker timeout')),10000);const on=m=>{if(m?.type==='broker.request'){const target=path.join(dir,`${m.id}.json`);void writeFile(target,JSON.stringify({result:{content:'OK',headers:{},code:200}}),'utf8');return;}if(m?.type==='response'&&m.id===id){clearTimeout(timer);child.off('message',on);m.error?reject(new Error(m.error)):resolve(m.result);}};child.on('message',on);child.send({...payload,id});});
- try{await ask({type:'init',sourceId:'test',entryUrl:entry,modules:{[entry]:code},ruleExt:'fixture-rule',bridgeDir:dir,profileId:'fixture-drpy2',hostAbiVersion:'fixture-host/2'});const home=await ask({type:'call',method:'home',args:[]});assert.equal(home.class[0].type_name,'Demo');const result=await ask({type:'call',method:'search',args:['needle']});assert.match(result.list[0].vod_name,/needle OK/);}finally{child.kill();await rm(dir,{recursive:true,force:true});}
+ try{await ask({type:'init',sourceId:'test',entryUrl:entry,modules:{[entry]:code},ruleExt:'fixture-rule',bridgeDir:dir,profileId:'fixture-drpy2',hostAbiVersion:'fixture-host/3',instantiation:'object',initContractId:'rule-ext-string-v1',requiredCapabilities:['req-sync','pdfh','pdfa','pd'],methodNames:['home','search']});const home=await ask({type:'call',method:'home',args:[]});assert.equal(home.class[0].type_name,'Demo');const result=await ask({type:'call',method:'search',args:['needle']});assert.match(result.list[0].vod_name,/needle OK/);}finally{child.kill();await rm(dir,{recursive:true,force:true});}
 });
-test('v1.4.13 music progress normalizes Windows paths before URL parsing and gates native samples by session identity',async()=>{
+test('v1.4.14 music progress normalizes Windows paths before URL parsing and gates native samples by session identity',async()=>{
  const [identity,client]=await Promise.all([text('apps/desktop/src/main/media-identity.ts'),text('apps/desktop/src/main/player-client.ts')]);assert.match(identity,/path\.win32\.normalize/);assert.match(identity,/fileURLToPath\(url,\{windows:true\}\)/);assert.doesNotMatch(identity,/decodeURI/);for(const field of ['hostEpoch','sampleSeq','sampleValid','seekRevision'])assert.match(client,new RegExp(field));
 });
-test('v1.4.13 lyrics prefer trustworthy synced LRCLIB results while keeping local synced fallback',async()=>{
- const service=await text('apps/desktop/src/main/music-service.ts'),online=await text('apps/desktop/src/main/music-online.ts');const fn=service.slice(service.indexOf('async function readLyricsInfo'),service.indexOf('async function addNetworkSource'));assert.ok(fn.indexOf('findOnlineLyrics')<fn.indexOf('track.lyricsPath'));assert.match(fn,/online\?\.kind==='synced'/);assert.match(fn,/parseLrc\(local\)\.length/);assert.match(online,/const title=sanitizeMusicMetadata\(track\.title\),artist=sanitizeMusicMetadata\(track\.artist\)/);assert.match(online,/new URLSearchParams\(\{track_name:title,artist_name:artist\}\)/);assert.doesNotMatch(online,/track_name:title,artist_name:artist,album_name/);
+test('v1.4.14 lyrics prefer local synced sidecars before online candidates',async()=>{
+ const service=await text('apps/desktop/src/main/music-service.ts'),online=await text('apps/desktop/src/main/music-online.ts');const fn=service.slice(service.indexOf('async function readLyricsInfo'),service.indexOf('async function addNetworkSource'));assert.ok(fn.indexOf('track.lyricsPath')<fn.indexOf('findOnlineLyrics'));assert.match(fn,/online\?\.kind==='synced'/);assert.match(fn,/parseLrc\(local\)\.length/);assert.match(online,/const title=sanitizeMusicMetadata\(track\.title\),artist=sanitizeMusicMetadata\(track\.artist\)/);assert.match(online,/new URLSearchParams\(\{track_name:title,artist_name:artist\}\)/);assert.doesNotMatch(online,/track_name:title,artist_name:artist,album_name/);
 });
 test('v1.4.12 playback switching is latest-wins and live uses optimistic first route',async()=>{
  const main=await text('apps/desktop/src/main/index.ts'),preload=await text('apps/desktop/src/preload/index.cts');assert.match(main,/vodPlaybackController\?\.abort/);assert.match(main,/PLAYBACK_SUPERSEDED/);assert.match(preload,/const optimistic=await tryCandidate\(0\)/);assert.match(main,/live route superseded/);
 });
-test('v1.4.13 packages drpy2 worker and exposes the new version',async()=>{
- const root=JSON.parse(await text('package.json'));assert.equal(root.version,'1.4.13');assert.ok(root.build.files.includes('services/drpy2-worker/dist/**/*'));assert.match(root.scripts['build:packages'],/@free-new-desk\/drpy2-worker/);
+test('v1.4.15 packages drpy2 worker and exposes the new version',async()=>{
+ const root=JSON.parse(await text('package.json'));assert.equal(root.version,'1.4.17');assert.ok(root.build.files.includes('services/drpy2-worker/dist/**/*'));assert.match(root.scripts['build:packages'],/@free-new-desk\/drpy2-worker/);
 });
 
-test('v1.4.12 uses the supplied opaque icon across renderer window tray and installer wiring',async()=>{
+test('v1.4.16 uses the supplied transparent icon across renderer window tray and installer wiring',async()=>{
   const [main,app,manifest,iconScript]=await Promise.all([
     text('apps/desktop/src/main/index.ts'),
     text('apps/desktop/src/renderer/App.vue'),
@@ -52,7 +52,7 @@ test('v1.4.12 uses the supplied opaque icon across renderer window tray and inst
   assert.match(app,/import appIconUrl from '.\/assets\/app-icon\.png'/);
   assert.match(manifest,/assets\/app-icon\.ico/);
   assert.match(iconScript,/sizes=\[16,20,24,32,48,64,128,256\]/);
-  assert.match(iconScript,/opaque multi-size ICO/);
+  assert.match(iconScript,/alpha-preserving multi-size ICO/);
   assert.match(iconScript,/without redrawing the supplied icon/);
 });
 test('v1.4.12 reproducibly prepares the pinned libmpv runtime before Windows packaging',async()=>{
@@ -82,4 +82,16 @@ test('v1.4.12 stages external runtime dependencies and isolates packaged smoke f
   assert.match(stager,/externalStaged/);assert.match(stager,/manifest\.dependencies/);assert.match(stager,/runtime dependency of/);
   assert.match(smoke,/free-new-desk-package-isolated-/);assert.match(smoke,/Copy-Item -Path \$sourcePackage/);
   assert.match(client,/stdio:\['ignore','ignore','pipe'\]/);assert.match(client,/Source Engine exited \(code \$\{code\}\)/);
+});
+test('v1.4.14 generic ESM engines are not misclassified as drpy2',()=>{
+ const generic=`import helper from './helper.js'; export default {init(){},home(){},category(){},detail(){},search(){},play(){}}`;
+ const result=classifyRuntimeFlavor({endpoint:'https://example.com/lf_search3_min.js',ext:''},generic);
+ assert.equal(result.flavor,'unsupported');assert.ok(result.signals.includes('source:export-default'));assert.ok(result.signals.includes('source:esm-import'));
+ const explicit=classifyRuntimeFlavor({endpoint:'https://example.com/drpy2.min.js',ext:''},generic);assert.equal(explicit.flavor,'drpy2-esm');
+});
+
+test('v1.4.14 drpy1 ESM remains outside the drpy2 profile',()=>{
+ const drpy1=`import helper from './helper.js'; const VERSION='drpy1 3.9.49beta36'; function DRPY(){}; export default {init(){},home(){},category(){},detail(){},search(){},play(){},DRPY}`;
+ const result=classifyRuntimeFlavor({endpoint:'https://example.com/drpy.min.js',ext:'https://example.com/rule.js'},drpy1);
+ assert.equal(result.flavor,'unsupported');assert.ok(result.signals.includes('source:drpy-core'));assert.ok(!result.signals.includes('source:drpy2'));
 });

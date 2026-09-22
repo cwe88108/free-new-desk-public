@@ -22,8 +22,7 @@ static std::string escaped(const std::wstring& value){
   std::string bytes(n,'\0'),out;WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),bytes.data(),n,nullptr,nullptr);
   for(unsigned char c:bytes){if(c=='\\'||c=='"')out+='\\';if(c<32)out+=' ';else out+=static_cast<char>(c);}return out;
 }
-static std::wstring serverOf(const std::wstring& share){auto end=share.find(L'\\',2);return end==std::wstring::npos?share:share.substr(0,end);}
-static std::vector<std::wstring> connections(const std::wstring& server,DWORD& error){
+static std::vector<std::wstring> connections(DWORD& error){
   HANDLE handle=nullptr;std::vector<std::wstring> result;
   error=WNetOpenEnumW(RESOURCE_CONNECTED,RESOURCETYPE_DISK,0,nullptr,&handle);if(error!=NO_ERROR)return result;
   std::vector<BYTE> buffer(65536);
@@ -32,7 +31,7 @@ static std::vector<std::wstring> connections(const std::wstring& server,DWORD& e
     if(code==ERROR_MORE_DATA&&size<=1024*1024){buffer.resize(size);continue;}
     if(code!=NO_ERROR){error=code;break;}
     auto rows=reinterpret_cast<NETRESOURCEW*>(buffer.data());
-    for(DWORD i=0;i<count;++i)if(rows[i].lpRemoteName){std::wstring name=rows[i].lpRemoteName;if(_wcsicmp(serverOf(name).c_str(),server.c_str())==0&&std::find(result.begin(),result.end(),name)==result.end())result.push_back(name);}
+    for(DWORD i=0;i<count;++i)if(rows[i].lpRemoteName){std::wstring name=rows[i].lpRemoteName;if(std::find(result.begin(),result.end(),name)==result.end())result.push_back(name);}
   }
   WNetCloseEnum(handle);return result;
 }
@@ -43,7 +42,7 @@ int main(){
     DWORD code=ERROR_INVALID_PARAMETER;
     if(share.rfind(L"\\\\",0)!=0||share.find(L'\\',2)==std::wstring::npos)throw 1;
     if(action==L"list"){
-      DWORD enumerationError=0;const auto rows=connections(serverOf(share),enumerationError);
+      DWORD enumerationError=0;const auto rows=connections(enumerationError);
       std::cout<<"{\"errorCode\":"<<enumerationError<<",\"shares\":[";
       for(size_t i=0;i<rows.size();++i){if(i)std::cout<<',';std::cout<<'"'<<escaped(rows[i])<<'"';}
       std::cout<<"],\"complete\":false}";return 0;

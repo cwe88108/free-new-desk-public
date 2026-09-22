@@ -1,18 +1,27 @@
 import { spawn } from 'node:child_process';
+import { lookup } from 'node:dns/promises';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 export interface SmbCredentials{username?:string;password?:string;}
-export function smbShareRoot(root:string):string|undefined{
-  const match=/^\\\\([^\\\0]+)\\([^\\\0]+)(?:\\|$)/.exec(root.replaceAll('/','\\'));
-  if(!match||['?','.'].includes(match[1]!))return;
-  return `\\\\${match[1]}\\${match[2]}`;
+
+function cleanSegment(value:string):string|undefined{const decoded=decodeURIComponent(value).trim();if(!decoded||decoded==='.'||decoded==='..'||/[\\/\0]/.test(decoded))return;return decoded;}
+export function normalizeSmbPath(input:string):string|undefined{
+  const value=input.trim();if(!value||value.includes('\0'))return;
+  if(/^smb:\/\//i.test(value))try{const url=new URL(value);if(url.protocol!=='smb:'||url.username||url.password||!url.hostname)return;const parts=url.pathname.split('/').filter(Boolean).map(cleanSegment);if(parts.length<1||parts.some(part=>!part))return;return `\\\\${url.hostname}\\${parts.join('\\')}`;}catch{return;}
+  let normalized=value.replaceAll('/','\\');
+  if(/^\\[^\\]/.test(normalized))normalized='\\'+normalized;
+  if(!normalized.startsWith('\\\\')||normalized.startsWith('\\\\?\\')||normalized.startsWith('\\\\.\\'))return;
+  const parts=normalized.slice(2).split('\\').filter(Boolean);if(parts.length<2||parts.some(part=>part==='.'||part==='..'||part.includes('\0')))return;
+  return `\\\\${parts.join('\\')}`;
 }
+export function smbShareRoot(root:string):string|undefined{const normalized=normalizeSmbPath(root);if(!normalized)return;const parts=normalized.slice(2).split('\\');return parts.length>=2?`\\\\${parts[0]}\\${parts[1]}`:undefined;}
+export function smbServerName(root:string):string|undefined{return smbShareRoot(root)?.slice(2).split('\\')[0]?.toLowerCase().replace(/\.$/,'');}
+export function smbServerIdentitiesMatch(left:string,right:string,leftAddresses:Iterable<string>=[],rightAddresses:Iterable<string>=[]):boolean{const a=left.toLowerCase().replace(/\.$/,''),b=right.toLowerCase().replace(/\.$/,'');if(a===b)return true;const first=new Set([a,...[...leftAddresses].map(value=>value.toLowerCase())]);return[b,...[...rightAddresses].map(value=>value.toLowerCase())].some(value=>first.has(value));}
 export class SmbError extends Error{
   readonly errorCode:number;
   constructor(code:number){
-    const info:Record<number,[string,string]>={3:['SMB_PATH_NOT_FOUND','共享中的目标路径不存在。'],5:['SMB_ACCESS_DENIED','没有共享目录访问权限。'],53:['SMB_UNREACHABLE','服务器不可达，请检查网络及地址。'],64:['SMB_CONNECTION_LOST','NAS 连接已中断，请检查网络后重试。'],67:['SMB_SHARE_NOT_FOUND','找不到共享目录。'],86:['SMB_INVALID_PASSWORD','密码错误。'],1219:['SMB_CREDENTIAL_CONFLICT','Windows 已使用其他凭据连接同一服务器。可尝试使用现有 Windows 会话，或查看冲突连接。'],1231:['SMB_NETWORK_UNREACHABLE','当前网络无法访问 NAS。'],1232:['SMB_HOST_UNREACHABLE','无法访问 NAS 主机。'],1326:['SMB_LOGON_FAILED','用户名或密码错误。'],1460:['SMB_TIMEOUT','连接操作超时，请检查网络后重试。'],2250:['SMB_NOT_CONNECTED','共享当前没有连接。'],2401:['SMB_IN_USE','连接正在使用中，请先关闭占用文件。']};
-    const [key,message]=info[code]??['SMB_CONNECTION_FAILED','无法连接 NAS，请检查共享地址、权限和网络。'];
-    super(`[${key} / ${code}] ${message}`);this.name='SmbError';this.errorCode=code;
+    const info:Record<number,[string,string]>={3:['SMB_PATH_NOT_FOUND','共享中的目标路径不存在。'],5:['SMB_ACCESS_DENIED','没有共享目录访问权限。'],53:['SMB_UNREACHABLE','服务器不可达，请检查网络及地址。'],64:['SMB_CONNECTION_LOST','NAS 连接已中断，请检查网络后重试。'],67:['SMB_SHARE_NOT_FOUND','找不到共享目录。'],86:['SMB_INVALID_PASSWORD','密码错误。'],1219:['SMB_CREDENTIAL_CONFLICT','Windows 已存在同服务器的其他凭据连接。可使用现有 Windows 会话，或查看并处理冲突连接。'],1231:['SMB_NETWORK_UNREACHABLE','当前网络无法访问 NAS。'],1232:['SMB_HOST_UNREACHABLE','无法访问 NAS 主机。'],1326:['SMB_LOGON_FAILED','用户名或密码错误。'],1460:['SMB_TIMEOUT','连接操作超时，请检查网络后重试。'],2250:['SMB_NOT_CONNECTED','共享当前没有连接。'],2401:['SMB_IN_USE','连接正在使用中，请先关闭占用文件。']};
+    const [key,message]=info[code]??['SMB_CONNECTION_FAILED','无法连接 NAS，请检查共享地址、权限和网络。'];super(`[${key} / ${code}] ${message}`);this.name='SmbError';this.errorCode=code;
   }
 }
 type NativeResult={errorCode:number;shares?:string[];complete?:boolean};
@@ -20,6 +29,8 @@ const locks=new Map<string,Promise<unknown>>();
 const sessions=new Map<string,{ownership:'owned'|'reused';connectedAt:number}>();
 function helperPath():string{return process.resourcesPath?path.join(process.resourcesPath,'native','player-host','smb-helper.exe'):path.resolve('native/player-host/build/Release/smb-helper.exe');}
 async function probeDirectory(root:string,timeoutMs=5000):Promise<boolean>{let timer:ReturnType<typeof setTimeout>|undefined;try{return await Promise.race([stat(root).then(value=>value.isDirectory()).catch(()=>false),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),timeoutMs);})]);}finally{if(timer)clearTimeout(timer);}}
+async function resolveServerAddresses(server:string):Promise<Set<string>>{const values=new Set<string>();try{const rows=await Promise.race([lookup(server,{all:true,verbatim:true}),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('dns timeout')),1500))]);for(const row of rows)values.add(row.address.toLowerCase());}catch{/* name-only comparison remains available */}return values;}
+export async function sameSmbServer(left:string,right:string):Promise<boolean>{const a=smbServerName(left),b=smbServerName(right);if(!a||!b)return false;if(a===b)return true;const [aa,bb]=await Promise.all([resolveServerAddresses(a),resolveServerAddresses(b)]);return smbServerIdentitiesMatch(a,b,aa,bb);}
 async function native(action:'connect'|'list'|'disconnect',share:string,credentials:SmbCredentials={}):Promise<NativeResult>{
   const packaged=helperPath(),executable=await stat(packaged).then(()=>packaged).catch(()=>path.resolve('native/player-host/build/Release/smb-helper.exe'));
   const values=[action,share,credentials.username??'',credentials.password??''];
@@ -35,18 +46,21 @@ async function native(action:'connect'|'list'|'disconnect',share:string,credenti
     child.stdin.on('error',()=>finish(new Error('SMB 凭据管道已关闭')));child.stdin.end(payload);
   });
 }
-async function exclusive<T>(root:string,work:()=>Promise<T>):Promise<T>{const server=root.split('\\')[2]!.toLowerCase(),previous=locks.get(server)??Promise.resolve();const pending=previous.catch(()=>undefined).then(work);locks.set(server,pending);try{return await pending;}finally{if(locks.get(server)===pending)locks.delete(server);}}
+async function exclusive<T>(root:string,work:()=>Promise<T>):Promise<T>{const server=smbServerName(root);if(!server)throw new Error('无效共享路径');const previous=locks.get(server)??Promise.resolve();const pending=previous.catch(()=>undefined).then(work);locks.set(server,pending);try{return await pending;}finally{if(locks.get(server)===pending)locks.delete(server);}}
 export async function ensureSmbConnection(root:string,credentials?:SmbCredentials):Promise<void>{
-  if(process.platform!=='win32')throw new Error('SMB 音乐源仅在 Windows 上受支持');const share=smbShareRoot(root);if(!share)throw new Error('SMB 地址必须是 \\\\server\\share 形式');
+  if(process.platform!=='win32')throw new Error('SMB 音乐源仅在 Windows 上受支持');const normalized=normalizeSmbPath(root),share=normalized?smbShareRoot(normalized):undefined;if(!normalized||!share)throw new Error('SMB 地址必须是 \\\\server\\share、\\server\\share 或 smb://server/share 形式');
   return exclusive(share,async()=>{
-    if(await probeDirectory(root)){sessions.set(share,{ownership:'reused',connectedAt:Date.now()});return;}
-    const result=await native('connect',share,credentials);if(result.errorCode){if(await probeDirectory(root)){sessions.set(share,{ownership:'reused',connectedAt:Date.now()});return;}throw new SmbError(result.errorCode);}
-    sessions.set(share,{ownership:'owned',connectedAt:Date.now()});if(!await probeDirectory(root))throw new SmbError(3);
+    if(await probeDirectory(normalized)){sessions.set(share,{ownership:'reused',connectedAt:Date.now()});return;}
+    const result=await native('connect',share,credentials);if(result.errorCode){if(await probeDirectory(normalized)){sessions.set(share,{ownership:'reused',connectedAt:Date.now()});return;}throw new SmbError(result.errorCode);}
+    sessions.set(share,{ownership:'owned',connectedAt:Date.now()});if(!await probeDirectory(normalized))throw new SmbError(3);
   });
 }
 export async function listSmbConnections(root:string):Promise<string[]>{
-  const share=smbShareRoot(root);if(!share)throw new Error('无效共享路径');const result=await native('list',share);if(result.errorCode)throw new SmbError(result.errorCode);
-  return [...new Set((result.shares??[]).map(value=>smbShareRoot(value)).filter((value):value is string=>Boolean(value)))];
+  const share=smbShareRoot(root);if(!share)throw new Error('无效共享路径');let result:NativeResult;
+  try{result=await native('list',share);}catch{return[];}
+  if(result.errorCode&&result.errorCode!==2250)return[];
+  const candidates=[...new Set((result.shares??[]).map(value=>smbShareRoot(value)).filter((value):value is string=>Boolean(value)))];
+  const checks=await Promise.all(candidates.map(async value=>({value,same:await sameSmbServer(share,value)})));return checks.filter(item=>item.same).map(item=>item.value);
 }
 /** Only call after explicit in-app confirmation and after releasing app handles. */
 export async function disconnectSmbShare(root:string):Promise<void>{const share=smbShareRoot(root);if(!share)throw new Error('无效共享路径');await exclusive(share,async()=>{const result=await native('disconnect',share);if(result.errorCode&&result.errorCode!==2250)throw new SmbError(result.errorCode);sessions.delete(share);});}

@@ -1,24 +1,28 @@
 <script setup lang="ts">
 import { onBeforeUnmount,onMounted,ref } from 'vue';
-import type { PlayerStats } from '@free-new-desk/contracts';
+import type { PlaybackSessionSnapshot,PlayerStats } from '@free-new-desk/contracts';
+import { adjacentMusicId,readQueue } from '../stores/music-playback';
 import HomeView from './HomeView.vue';
 
 const miniExpanded=ref(localStorage.getItem('ui.miniPlayerExpanded')!=='false');
 const playerStats=ref<PlayerStats|null>(null);
-const reachable=ref(false);
-let poll:ReturnType<typeof setInterval>|undefined;
+const runtime=ref<PlaybackSessionSnapshot|null>(null);
+const reachable=ref(false);const miniError=ref('');
+let poll:ReturnType<typeof setInterval>|undefined;let removeRuntime:(()=>void)|undefined;
 
 async function refresh(){
   try{playerStats.value=await window.desktop.playback.query('stats');reachable.value=true;}
   catch{reachable.value=false;}
 }
 function toggle(){miniExpanded.value=!miniExpanded.value;localStorage.setItem('ui.miniPlayerExpanded',String(miniExpanded.value));}
-async function pause(){if(!reachable.value)return;await window.desktop.playback.control({command:'pause',value:!playerStats.value?.paused});await refresh();}
-async function mute(){if(!reachable.value)return;await window.desktop.playback.control({command:'mute',value:!playerStats.value?.muted});await refresh();}
-async function volume(event:Event){if(!reachable.value)return;await window.desktop.playback.control({command:'volume',value:Number((event.target as HTMLInputElement).value)});await refresh();}
+async function pause(){if(!reachable.value)return;try{const result=await window.desktop.playback.control({command:'pause',value:!playerStats.value?.paused});if(!result.ok)throw new Error(result.detail??'暂停/继续操作失败');miniError.value='';await refresh();}catch(error){miniError.value=error instanceof Error?error.message:String(error);}}
+async function mute(){if(!reachable.value)return;try{const result=await window.desktop.playback.control({command:'mute',value:!playerStats.value?.muted});if(!result.ok)throw new Error(result.detail??'静音操作失败');miniError.value='';await refresh();}catch(error){miniError.value=error instanceof Error?error.message:String(error);}}
+async function volume(event:Event){if(!reachable.value)return;try{const result=await window.desktop.playback.control({command:'volume',value:Number((event.target as HTMLInputElement).value)});if(!result.ok)throw new Error(result.detail??'音量调整失败');miniError.value='';await refresh();}catch(error){miniError.value=error instanceof Error?error.message:String(error);await refresh();}}
+async function skipMusic(direction:1|-1){const session=runtime.value;if(session?.domain!=='music'||!session.trackId)return;const ids=readQueue(),target=adjacentMusicId(ids,session.trackId,direction,localStorage.getItem('music.mode')??'sequence');if(!target||target===session.trackId){miniError.value='当前音乐队列没有可切换的项目。';return;}try{miniError.value='';await window.desktop.music.play({trackId:target,initiator:'user'});}catch(error){miniError.value=error instanceof Error?error.message:String(error);}}
+function hasMusicAdjacent(){return runtime.value?.domain==='music'&&readQueue().length>1;}
 
-onMounted(async()=>{await refresh();poll=setInterval(refresh,1500);});
-onBeforeUnmount(()=>{if(poll)clearInterval(poll);});
+onMounted(async()=>{runtime.value=await window.desktop.playback.runtimeSession().catch(()=>null);removeRuntime=window.desktop.playback.onRuntimeSessionChanged(value=>{runtime.value=value;});await refresh();poll=setInterval(refresh,1500);});
+onBeforeUnmount(()=>{if(poll)clearInterval(poll);removeRuntime?.();});
 </script>
 
 <template>
@@ -38,12 +42,13 @@ onBeforeUnmount(()=>{if(poll)clearInterval(poll);});
           <span v-else>等待播放会话</span>
         </div>
         <div class="mini-actions">
-          <button disabled aria-label="上一项" title="当前播放队列没有可用上一项">|◀</button>
+          <button v-if="runtime?.domain==='music'" :disabled="!hasMusicAdjacent()" aria-label="上一项" title="音乐队列上一项" @click="skipMusic(-1)">|◀</button>
           <button :disabled="!reachable" :aria-label="playerStats?.paused?'播放':'暂停'" @click="pause">{{playerStats?.paused?'▶':'Ⅱ'}}</button>
-          <button disabled aria-label="下一项" title="当前播放队列没有可用下一项">▶|</button>
+          <button v-if="runtime?.domain==='music'" :disabled="!hasMusicAdjacent()" aria-label="下一项" title="音乐队列下一项" @click="skipMusic(1)">▶|</button>
         </div>
         <button class="mute-button" :disabled="!reachable" :aria-label="playerStats?.muted?'取消静音':'静音'" @click="mute">{{playerStats?.muted?'🔇':'🔊'}}</button>
         <input type="range" min="0" max="100" :value="playerStats?.volume??80" aria-label="播放器音量" :disabled="!reachable" @change="volume"/>
+        <small v-if="miniError" class="mini-error">{{miniError}}</small>
       </div>
     </section>
   </div>

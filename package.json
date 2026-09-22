@@ -1,12 +1,12 @@
 {
   "name": "free-new-desk",
-  "version": "1.4.13",
-  "private": true,
+  "version": "1.4.17",
+  "private": false,
   "description": "Windows 11 x64 desktop media platform with TVBox/FongMi-compatible source architecture.",
   "type": "module",
   "main": "apps/desktop/dist/main/bootstrap.js",
-  "author": "cwe88108",
-  "license": "UNLICENSED",
+  "author": "Free New Desk contributors",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -21,6 +21,7 @@
     "build:desktop": "npm run build -w @free-new-desk/desktop",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "lint": "node scripts/lint.mjs",
+    "check:public-sanitization": "node scripts/check-public-sanitization.mjs",
     "test": "npm run build:packages && npm run build:desktop && node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build && node scripts/verify-renderer-build.mjs",
     "dev": "npm run dev -w @free-new-desk/desktop",
@@ -49,7 +50,7 @@
     "vue-tsc": "3.0.6"
   },
   "build": {
-    "appId": "com.cwe88108.freenewdesk",
+    "appId": "org.free-new-desk.desktop",
     "productName": "Free New Desk",
     "asar": true,
     "directories": {
@@ -107,6 +108,10 @@
         "to": "assets/app-icon.ico"
       },
       {
+        "from": "assets/tray-icon.png",
+        "to": "assets/tray-icon.png"
+      },
+      {
         "from": "native/player-host/build/Release/smb-helper.exe",
         "to": "native/player-host/smb-helper.exe"
       }
@@ -129,7 +134,7 @@
       ]
     },
     "nsis": {
-      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "artifactName": "Free-New-Desk-Setup-${version}-${arch}.${ext}",
       "installerIcon": "assets/app-icon.ico",
       "uninstallerIcon": "assets/app-icon.ico",
       "installerHeaderIcon": "assets/app-icon.ico",
@@ -139,7 +144,7 @@
       "createStartMenuShortcut": true
     },
     "portable": {
-      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+      "artifactName": "Free-New-Desk-Portable-${version}-${arch}.${ext}"
     }
   }
 }

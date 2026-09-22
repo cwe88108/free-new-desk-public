@@ -17,12 +17,16 @@ export interface PlayerLoadContext{
 }
 const browserUserAgent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
 const compatibilityUserAgents=['okhttp/3.15','bingcha/1.1 (mianfeifenxiang) ','Goiptv/8.8.8'];
+const STATS_SOFT_STALE_MS=3_000;
+const STATS_HARD_EXPIRY_MS=15_000;
 function headerKey(headers:Record<string,string>,name:string):string|undefined{return Object.keys(headers).find(key=>key.toLowerCase()===name.toLowerCase());}
 function hasHeader(headers:Record<string,string>,name:string):boolean{return Boolean(headerKey(headers,name));}
 function withUserAgent(headers:Record<string,string>,value:string):Record<string,string>{const next={...headers};const key=headerKey(next,'User-Agent');if(key&&key!=='User-Agent')delete next[key];next['User-Agent']=value;return next;}
 function headerFields(headers:Record<string,string>):string{return Object.entries(headers).map(([key,value])=>`${key}: ${value}`).join(',');}
 function runtimeMeta(context:PlayerLoadContext):Partial<PlaybackSessionSnapshot>{return{...(context.sourceId?{sourceId:context.sourceId}:{}),...(context.channelId?{channelId:context.channelId}:{}),...(context.routeIndex!==undefined?{routeIndex:context.routeIndex}:{}),...(context.routeCount!==undefined?{routeCount:context.routeCount}:{}),...(context.videoId?{videoId:context.videoId}:{}),...(context.episodeId?{episodeId:context.episodeId}:{}),...(context.trackId?{trackId:context.trackId}:{}),...(context.queueItemId?{queueItemId:context.queueItemId}:{})};}
 class PlayerRemoteError extends Error{constructor(message:string){super(message);this.name='PlayerRemoteError';}}
+class PlayerTransportTimeoutError extends Error{constructor(readonly method:string,readonly timeoutMs:number){super(`PlayerHost timeout after ${timeoutMs/1000}s: ${method}`);this.name='PlayerTransportTimeoutError';}}
+class PlayerTransportConnectionError extends Error{constructor(readonly method:string,readonly code:string,detail:string){super(`PlayerHost transport ${code} during ${method}: ${detail}`);this.name='PlayerTransportConnectionError';}}
 class PlaybackSupersededError extends Error{constructor(){super('[PLAYBACK_SUPERSEDED] 播放请求已被更新的播放操作替代');this.name='PlaybackSupersededError';}}
 let currentPlayerClient:PlayerClient|undefined;
 const runtimeListeners=new Set<(session:PlayerRuntimeSession)=>void>();
@@ -46,8 +50,17 @@ export class PlayerClient{
   #acceptedEpoch='';
   #sampleSeq=0;
   #seekRevision=0;
+  #lastStatsAt=0;
+  #statsState:'pending'|'fresh'|'stale'|'unavailable'='pending';
+  #transportFaultEpoch='';
+  #transportFaultStreak=0;
+  #statsInFlight:{requestId:string;loadId?:string;promise:Promise<PlayerStats>}|undefined;
+  #lastStats:PlayerStats|undefined;
 
   constructor(private readonly recordMetric:(metric:string,value:number)=>void=()=>{}){currentPlayerClient=this;}
+
+  #resetStatsCache():void{this.#statsInFlight=undefined;this.#lastStats=undefined;this.#lastStatsAt=0;this.#statsState='pending';}
+  #resetTransportFaults():void{this.#transportFaultEpoch='';this.#transportFaultStreak=0;}
 
   setParentWindowHandle(handle:Buffer):void{
     try{
@@ -92,7 +105,7 @@ export class PlayerClient{
           this.#assertCurrent(generation,requestId,domain??undefined);
           if(!accepted.ok||!accepted.accepted||!accepted.loadId)throw new PlayerRemoteError(accepted.detail??'PlayerHost did not accept media load');
           if(requestId&&runtimeController.isCurrent(requestId))runtimeController.patch(requestId,{...runtimeMeta(context),status:'loading',loadId:accepted.loadId});
-          this.#acceptedEpoch=accepted.hostEpoch??'';this.#sampleSeq=0;this.#seekRevision=0;
+          this.#acceptedEpoch=accepted.hostEpoch??'';this.#sampleSeq=0;this.#seekRevision=0;this.#resetStatsCache();this.#resetTransportFaults();
           onAccepted?.(accepted.loadId);
           const openStarted=performance.now();
           const result=await this.#waitForLoad(accepted.loadId,generation,requestId,domain??undefined);
@@ -117,12 +130,13 @@ export class PlayerClient{
 
   async command(command:PlayerCommand):Promise<CommandResult>{
     if(process.platform!=='win32')return{ok:false,detail:'Native PlayerHost is Windows-only'};
-    if(command.command==='stop'){this.#loadGeneration+=1;const current=runtimeController.current();if(current.requestId)runtimeController.end('stop');}
+    if(command.command==='stop'){this.#loadGeneration+=1;this.#resetStatsCache();this.#resetTransportFaults();const current=runtimeController.current();if(current.requestId)runtimeController.end('stop');}
     const before=runtimeController.current();
     if(command.command==='seek'&&((command.loadId&&command.loadId!==before.loadId)||(command.requestId&&command.requestId!==before.requestId)))return{ok:false,detail:'[PLAYBACK_SUPERSEDED] seek 会话已变化'};
     const payload=command.command==='seek'?{...command,loadId:before.loadId}:command;
     const result=await this.#sendWithRecovery('player.command',payload as unknown as PlayerParams) as CommandResult&{seekRevision?:number};
     if(command.command==='seek'&&before.loadId===runtimeController.current().loadId&&result.ok)this.#seekRevision=result.seekRevision??this.#seekRevision;
+    else if(command.command==='seek'&&!result.ok)this.recordMetric('seekRejectedCount',1);
 
     if(result.ok&&command.command==='pause'){const current=runtimeController.current();if(current.requestId)runtimeController.pause(current.requestId,command.value);}
     return result;
@@ -133,14 +147,23 @@ export class PlayerClient{
   async query(query:'load-status'):Promise<PlayerLoadStatus>;
   async query(query:PlayerQuery):Promise<PlayerStats|PlayerTrack[]|PlayerLoadStatus>;
   async query(query:PlayerQuery):Promise<PlayerStats|PlayerTrack[]|PlayerLoadStatus>{
+    if(query!=='stats')return await this.#queryOnce(query);
+    const session=runtimeController.current(),inFlight=this.#statsInFlight;
+    if(inFlight&&inFlight.requestId===session.requestId&&inFlight.loadId===session.loadId)return await inFlight.promise;
+    const promise=this.#queryOnce('stats') as Promise<PlayerStats>;
+    this.#statsInFlight={requestId:session.requestId,...(session.loadId?{loadId:session.loadId}:{}),promise};
+    try{return await promise;}finally{if(this.#statsInFlight?.promise===promise)this.#statsInFlight=undefined;}
+  }
+
+  async #queryOnce(query:PlayerQuery):Promise<PlayerStats|PlayerTrack[]|PlayerLoadStatus>{
     if(process.platform!=='win32')throw new Error('Native PlayerHost is Windows-only');
     const requestedSession=runtimeController.current();
-    const result=await this.#sendWithRecovery('player.query',{query}) as PlayerStats|PlayerTrack[]|PlayerLoadStatus;
+    let result=await this.#sendWithRecovery('player.query',{query}) as PlayerStats|PlayerTrack[]|PlayerLoadStatus;
     if(query==='tracks')return result;
     if(requestedSession.requestId!==runtimeController.current().requestId)throw new PlaybackSupersededError();
     if(query==='load-status'&&result&&typeof result==='object'&&!Array.isArray(result)){
       const state=result as PlayerLoadStatus,current=runtimeController.current();
-      if(current.loadId&&state.loadId===current.loadId){
+      if(current.loadId&&state.loadId===current.loadId&&current.domain!=='live'){
         if(state.status==='ended')runtimeController.end(state.error==='eof'?'eof':state.error==='failed'?'failed':'stop');
         else if(state.status==='failed'&&current.requestId)runtimeController.fail(current.requestId,state.error??'PlayerHost media load failed');
       }
@@ -148,8 +171,23 @@ export class PlayerClient{
     const current=runtimeController.current();
     if(query==='stats'){
       const sample=result as PlayerStats;
-      if(!sample.sampleValid||!sample.hostEpoch||sample.hostEpoch!==this.#acceptedEpoch||sample.loadId!==current.loadId||!Number.isSafeInteger(sample.sampleSeq)||(sample.sampleSeq??0)<=this.#sampleSeq||(sample.seekRevision??0)<this.#seekRevision)throw new Error('[PLAYBACK_STATS_PENDING] 等待当前会话有效采样');
-      this.#sampleSeq=sample.sampleSeq!;
+      const isCurrentSample=Boolean(sample.sampleValid&&sample.hostEpoch&&sample.hostEpoch===this.#acceptedEpoch&&sample.loadId===current.loadId&&Number.isSafeInteger(sample.sampleSeq)&&(sample.sampleSeq??0)>this.#sampleSeq&&(sample.seekRevision??0)>=this.#seekRevision);
+      if(isCurrentSample){
+        this.#sampleSeq=sample.sampleSeq!;
+        this.#lastStatsAt=performance.now();
+        this.#statsState='fresh';
+        this.#resetTransportFaults();
+        this.#lastStats={...sample,sampleFresh:true,sampleAgeMs:0,sampleState:'fresh'};
+        result=this.#lastStats;
+      }else{
+        const cached=this.#lastStats,age=Math.max(0,performance.now()-this.#lastStatsAt);
+        if(!cached||cached.hostEpoch!==this.#acceptedEpoch||cached.loadId!==current.loadId||(cached.seekRevision??0)<this.#seekRevision){this.#statsState='pending';throw new Error('[PLAYBACK_STATS_PENDING] 等待当前会话有效采样');}
+        if(age>STATS_HARD_EXPIRY_MS){if(this.#statsState!=='unavailable')this.recordMetric('playerStatsUnavailableCount',1);this.#statsState='unavailable';throw new Error('[PLAYBACK_STATS_UNAVAILABLE] 当前会话统计已超过 15 秒，不能用于播放或恢复决策');}
+        if(age>STATS_SOFT_STALE_MS&&this.#statsState!=='stale')this.recordMetric('playerStatsStaleCount',1);
+        this.#statsState='stale';
+        // This cache is display-only. Callers must require sampleFresh and samplePositionStable before using it for watchdog or progress decisions.
+        result={...cached,sampleFresh:false,sampleAgeMs:age,sampleState:'stale'};
+      }
     }
     if(result&&typeof result==='object'&&!Array.isArray(result))return{...result,domain:current.domain,requestId:current.requestId,sessionGeneration:current.generation,sessionStatus:current.status,...(current.loadId?{sessionLoadId:current.loadId}:{})} as PlayerStats|PlayerLoadStatus;
     return result;
@@ -174,6 +212,8 @@ export class PlayerClient{
 
   stop():void{
     this.#loadGeneration+=1;
+    this.#resetStatsCache();
+    this.#resetTransportFaults();
     const current=runtimeController.current();if(current.requestId)runtimeController.end('stop');
     this.#process?.kill();
     this.#process=undefined;
@@ -198,11 +238,20 @@ export class PlayerClient{
       if(first instanceof PlayerRemoteError)throw first;
       assertCurrent();
       if(method!=='player.load'){
-        // Do not replay seek/query against an empty replacement process. Fail explicitly;
-        // the next complete media load is the safe recovery boundary.
+        if(first instanceof PlayerTransportTimeoutError||first instanceof PlayerTransportConnectionError){
+          const faultEpoch=this.#acceptedEpoch||'host-starting';
+          if(this.#transportFaultEpoch!==faultEpoch){this.#transportFaultEpoch=faultEpoch;this.#transportFaultStreak=0;}
+          this.#transportFaultStreak+=1;
+          this.recordMetric(first instanceof PlayerTransportTimeoutError?'playerHostTimeoutCount':'playerHostConnectionFailureCount',1);
+          // A timeout or pipe reset does not prove that the host died or that a non-idempotent command was not applied. Only a fresh, identity-checked stats sample clears this epoch-bound fault budget.
+          if(this.#transportFaultStreak<3){const kind=method==='player.query'?'QUERY':'COMMAND';const code=first instanceof PlayerTransportTimeoutError?`[PLAYER_${kind}_TIMEOUT]`:`[PLAYER_${kind}_UNAVAILABLE]`;throw new Error(`${code} PlayerHost 本次通信未确认，媒体会话保持不变`,{cause:first});}
+        }
+        // Confirmed transport failure, or repeated transport faults, crosses the safe recovery boundary.
+        // Never replay a relative seek/control because the timed-out command may already have executed.
         this.#loadGeneration+=1;
         this.#stopTransportOnly();
-        const detail='[PLAYER_TRANSPORT_FAILED] 播放器连接中断，请重新播放当前媒体';
+        this.#resetTransportFaults();
+        const detail='[PLAYER_TRANSPORT_FAILED] 播放器持续不可响应或连接中断，请重新播放当前媒体';
         if(session.requestId&&runtimeController.isMutable(session.requestId))runtimeController.fail(session.requestId,detail);
         this.recordMetric('playerHostTransportFailureCount',1);
         throw new Error(detail,{cause:first});
@@ -247,14 +296,14 @@ export class PlayerClient{
     this.#pipeName=`\\\\.\\pipe\\free-new-desk-player-${randomUUID()}`;
     let startupError:Error|undefined;
     let stderrTail='';
-    const args=['--pipe',this.#pipeName,'--parent-pid',String(process.pid),...(this.#parentHwnd?['--parent-hwnd',this.#parentHwnd]:[]),...(process.env.FND_UI_SMOKE==='1'?['--test-audio-output','null']:[])];
+    const args=['--pipe',this.#pipeName,'--parent-pid',String(process.pid),...(this.#parentHwnd?['--parent-hwnd',this.#parentHwnd]:[]),...((process.env.FND_UI_SMOKE==='1'||process.env.FND_MUSIC_SMOKE==='1')?['--test-audio-output','null']:[])];
     const child=spawn(executable,args,{windowsHide:true});
     this.recordMetric('playerHostStartMs',performance.now()-started);
     child.stdout.on('data',()=>{});
     child.stderr.on('data',chunk=>{stderrTail=(stderrTail+String(chunk)).slice(-4096);});
     child.once('error',error=>{startupError=error;});
     child.once('exit',(code,signal)=>{
-      if(this.#process===child){this.#process=undefined;this.#pipeName='';}
+      if(this.#process===child){this.recordMetric('playerHostExitCount',1);this.#process=undefined;this.#pipeName='';}
       if(code!==0)startupError=new Error(`PlayerHost exited with code ${code}${signal?` (${signal})`:''}${stderrTail?`: ${stderrTail.trim()}`:''}`);
     });
     this.#process=child;
@@ -279,7 +328,7 @@ export class PlayerClient{
       const socket=net.createConnection(this.#pipeName);
       let buffer='';
       const timeoutMs=10_000;
-      const timer=setTimeout(()=>{socket.destroy();reject(new Error(`PlayerHost timeout after ${timeoutMs/1000}s: ${method}`));},timeoutMs);
+      const timer=setTimeout(()=>{socket.destroy();reject(new PlayerTransportTimeoutError(method,timeoutMs));},timeoutMs);
       socket.setEncoding('utf8');
       socket.on('connect',()=>socket.write(`${JSON.stringify({id:randomUUID(),method,params})}\n`));
       socket.on('data',chunk=>{
@@ -295,7 +344,7 @@ export class PlayerClient{
           else resolve(response.result);
         }catch(error){reject(error instanceof Error?error:new Error(String(error)));}
       });
-      socket.on('error',error=>{clearTimeout(timer);reject(error);});
+      socket.on('error',error=>{clearTimeout(timer);const code=(error as NodeJS.ErrnoException).code??'UNKNOWN';reject(new PlayerTransportConnectionError(method,code,error.message));});
     });
   }
 }

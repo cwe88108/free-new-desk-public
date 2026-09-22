@@ -6,7 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { DataService } from '../../services/data-service/dist/index.js';
 
-test('DataService persists source playback metadata, live headers and resumable history metadata after migration v14',()=>{
+test('DataService persists source playback metadata, live headers and resumable history metadata after migration v15',()=>{
   const dir=mkdtempSync(path.join(os.tmpdir(),'fnd-live-'));
   let db;
   try{
@@ -31,7 +31,7 @@ test('DataService persists source playback metadata, live headers and resumable 
     assert.deepEqual(history?.episodes,episodes);
     assert.equal(history?.position,12.5);
     assert.equal(history?.duration,1800);
-    assert.equal(db.getDatabaseVersion(),14);
+    assert.equal(db.getDatabaseVersion(),16);
   }finally{
     db?.close();
     rmSync(dir,{recursive:true,force:true});

@@ -1,6 +1,6 @@
 {
   "name": "@free-new-desk/desktop",
-  "version": "1.4.13",
+  "version": "1.4.17",
   "private": true,
   "type": "module",
   "scripts": {

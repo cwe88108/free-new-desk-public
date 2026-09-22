@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$AppPath = '',
-  [double[]]$Scales = @(1, 1.25, 1.5),
+  [double[]]$Scales = @(1, 1.25, 1.5, 2),
   [switch]$DpiOnly
 )
 $ErrorActionPreference = 'Stop'

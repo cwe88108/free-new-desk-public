@@ -16,6 +16,13 @@ test('drpy network guard blocks literal and DNS-local targets including IPv6',as
 
 test('qist engine profile requires the pinned engine and core hashes',()=>{
   const manifest={engineUrl:'https://raw.githubusercontent.com/qist/tvbox/master/lib/drpy2.min.js',family:'drpy2-esm',version:'3.9.52beta3',sha256:'67f4f6b460db1ec7ef50585953ce826c5263ca91d72958490ef4702b4e154fe1',dependencies:[{url:'https://raw.githubusercontent.com/qist/tvbox/master/lib/drpy-core-lite.min.js',sha256:'18bab373dfa67a4956f25f273fafb3e5b6b9fdf7bafb21acf0f6264b474900f5'}],fetchedAt:0,lastKnownGood:false,validation:'downloaded'};
-  const profile=resolveDrpy2Profile(manifest);assert.equal(profile.id,'qist-drpy2-3.9.52beta3-20250801');assert.equal(profile.hostAbiVersion,'fnd-drpy2-host/2');
+  const profile=resolveDrpy2Profile(manifest);assert.equal(profile.id,'qist-drpy2-3.9.52beta3-20250801');assert.equal(profile.hostAbiVersion,'fnd-drpy2-host/3');
   assert.throws(()=>resolveDrpy2Profile({...manifest,sha256:'0'.repeat(64)}),/PROFILE_UNVERIFIED/);
+});
+
+test('v1.4.14 drpy bridge drops late responses after worker generation reset',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const code=await readFile(new URL('../../services/source-engine/src/drpy2-adapter.ts',import.meta.url),'utf8');
+  assert.match(code,/if\(!bridgeDir\|\|generation!==this\.#generation\|\|bridgeDir!==this\.#bridgeDir\)return/);
+  assert.match(code,/#writeSyncResponse\(id,\{error:[^\n]+\},generation,bridgeDir\)/);
 });

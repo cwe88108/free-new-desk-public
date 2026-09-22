@@ -33,14 +33,14 @@ function categoryParams(categoryId:string,page:number,filters:Record<string,stri
 }
 
 export class CmsJsonAdapter extends BaseAdapter{
-  async #load(params:Record<string,string|number|undefined>):Promise<CmsJsonPayload>{return this.broker.json<CmsJsonPayload>({sourceId:this.sourceId(),url:buildUrl(this.endpoint,params),retries:1});}
-  async getHome():Promise<HomeResult>{
-    const payload=await this.#load({ac:'detail'});
+  async #load(params:Record<string,string|number|undefined>,signal?:AbortSignal):Promise<CmsJsonPayload>{return this.broker.json<CmsJsonPayload>({sourceId:this.sourceId(),url:buildUrl(this.endpoint,params),retries:1,...(signal?{signal}:{})});}
+  async getHome(signal?:AbortSignal):Promise<HomeResult>{
+    const payload=await this.#load({ac:'detail'},signal);
     let categories=parseCmsCategories(payload),filters=parseCmsFilters(payload);
     if(categories.length===0){
       for(const params of [{ac:'list'} as Record<string,string|number|undefined>,{}]){
         try{
-          const metadata=await this.#load(params);
+          const metadata=await this.#load(params,signal);
           if(categories.length===0)categories=parseCmsCategories(metadata);
           if(Object.keys(filters).length===0)filters=parseCmsFilters(metadata);
           if(categories.length>0)break;
@@ -49,32 +49,32 @@ export class CmsJsonAdapter extends BaseAdapter{
     }
     return{items:parseCmsJson(payload),...(categories.length?{categories}:{}),...(Object.keys(filters).length?{filters}:{})};
   }
-  async getCategory(categoryId:string,page:number,filters:Record<string,string>={}):Promise<CategoryResult>{
-    const payload=await this.#load(categoryParams(categoryId,page,filters));
+  async getCategory(categoryId:string,page:number,filters:Record<string,string>={},signal?:AbortSignal):Promise<CategoryResult>{
+    const payload=await this.#load(categoryParams(categoryId,page,filters),signal);
     const items=parseCmsJson(payload),pagination=jsonPagination(payload,page,items.length);
     return{page,hasMore:pagination.hasMore,totalPages:pagination.totalPages,...(pagination.totalItems?{totalItems:pagination.totalItems}:{}),items};
   }
-  async search(keyword:string,page=1):Promise<SearchResult>{return{page,items:parseCmsJson(await this.#load({ac:'detail',wd:keyword,pg:page}))};}
-  async getDetail(ids:string[]):Promise<DetailResult>{const item=jsonList(await this.#load({ac:'detail',ids:ids.join(',')}))[0];if(!item)throw new Error('CMS JSON detail returned no video');return jsonDetail(item);}
+  async search(keyword:string,page=1,signal?:AbortSignal):Promise<SearchResult>{return{page,items:parseCmsJson(await this.#load({ac:'detail',wd:keyword,pg:page},signal))};}
+  async getDetail(ids:string[],signal?:AbortSignal):Promise<DetailResult>{const item=jsonList(await this.#load({ac:'detail',ids:ids.join(',')},signal))[0];if(!item)throw new Error('CMS JSON detail returned no video');return jsonDetail(item);}
 }
 
 export class CmsXmlAdapter extends BaseAdapter{
-  async #load(params:Record<string,string|number|undefined>):Promise<string>{return this.broker.text({sourceId:this.sourceId(),url:buildUrl(this.endpoint,params),retries:1});}
-  async getHome():Promise<HomeResult>{
-    const xml=await this.#load({ac:'videolist'});
+  async #load(params:Record<string,string|number|undefined>,signal?:AbortSignal):Promise<string>{return this.broker.text({sourceId:this.sourceId(),url:buildUrl(this.endpoint,params),retries:1,...(signal?{signal}:{})});}
+  async getHome(signal?:AbortSignal):Promise<HomeResult>{
+    const xml=await this.#load({ac:'videolist'},signal);
     let categories=parseCmsXmlCategories(xml);
     if(categories.length===0){
       for(const params of [{ac:'list'} as Record<string,string|number|undefined>,{}]){
-        try{categories=parseCmsXmlCategories(await this.#load(params));if(categories.length)break;}catch{/* metadata endpoints vary */}
+        try{categories=parseCmsXmlCategories(await this.#load(params,signal));if(categories.length)break;}catch{/* metadata endpoints vary */}
       }
     }
     return{items:parseCmsXml(xml),...(categories.length?{categories}:{})};
   }
-  async getCategory(categoryId:string,page:number,filters:Record<string,string>={}):Promise<CategoryResult>{
-    const xml=await this.#load({...filters,ac:'videolist',t:categoryId,pg:page,...(Object.keys(filters).length?{f:JSON.stringify(filters)}:{})});
+  async getCategory(categoryId:string,page:number,filters:Record<string,string>={},signal?:AbortSignal):Promise<CategoryResult>{
+    const xml=await this.#load({...filters,ac:'videolist',t:categoryId,pg:page,...(Object.keys(filters).length?{f:JSON.stringify(filters)}:{})},signal);
     const items=parseCmsXml(xml),pagination=xmlPagination(xml,page,items.length);
     return{page,hasMore:pagination.hasMore,totalPages:pagination.totalPages,...(pagination.totalItems?{totalItems:pagination.totalItems}:{}),items};
   }
-  async search(keyword:string,page=1):Promise<SearchResult>{return{page,items:parseCmsXml(await this.#load({ac:'videolist',wd:keyword,pg:page}))};}
-  async getDetail(ids:string[]):Promise<DetailResult>{const block=videoBlocks(await this.#load({ac:'videolist',ids:ids.join(',')}))[0];if(!block)throw new Error('CMS XML detail returned no video');return xmlDetail(block);}
+  async search(keyword:string,page=1,signal?:AbortSignal):Promise<SearchResult>{return{page,items:parseCmsXml(await this.#load({ac:'videolist',wd:keyword,pg:page},signal))};}
+  async getDetail(ids:string[],signal?:AbortSignal):Promise<DetailResult>{const block=videoBlocks(await this.#load({ac:'videolist',ids:ids.join(',')},signal))[0];if(!block)throw new Error('CMS XML detail returned no video');return xmlDetail(block);}
 }

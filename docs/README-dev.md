@@ -2,7 +2,7 @@
 
 Free New Desk 是一个面向 **Windows 11 x64** 的 TVBox / FongMi 风格桌面影音播放器。软件本身**不内置任何第三方影视源**，只提供用户自有或已获授权配置的导入、解析、直播、节目表与播放能力。
 
-## V1.4.9 功能与兼容增强
+## V1.4.17 功能与兼容增强
 
 - 直播主播放操作统一进入嵌入式播放器，页内播放明确标记为预览；点播、直播和搜索页面支持短时状态恢复。
 - PlayerHost 异步接受媒体加载请求，媒体打开期间仍可查询状态、停止播放和同步原生窗口，并导出首帧、缓冲与 P95 性能指标。
@@ -86,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File scripts/test-packaged-ui.ps1
 
 ## 发布与更新
 
-应用只检查并打开本仓库自己的 Releases：`cwe88108/free-new-desk-public`。当前公共版本为 **v1.4.13**；发布标签使用 SemVer，例如 `v1.4.13`。公共版发行包在本地 Windows 环境编译后上传到对应 GitHub Release。
+应用只检查并打开本仓库自己的 Releases：`cwe88108/free-new-desk-public`。当前公共版本为 **v1.4.17**；发布标签使用 SemVer，例如 `v1.4.17`。公共版发行包在本地 Windows 环境编译后上传到对应 GitHub Release。
 
 ## 许可证与第三方组件
 

@@ -89,3 +89,22 @@ test('home page deep-links update settings, unhealthy sources and reservation ba
   const home=await read('apps/desktop/src/renderer/views/HomeView.vue');
   for(const token of ['to="/settings?section=update"','reservation-badge',"'"+'/sources?filter=unhealthy'+"'"])assert.ok(home.includes(token),`missing ${token}`);
 });
+
+
+test('VOD recovery keeps the failed request actionable and long episode labels contained',async()=>{
+  const sniffing=await read('apps/desktop/src/main/sniffing-service.ts');
+  const main=await read('apps/desktop/src/main/index.ts');
+  const vod=await read('apps/desktop/src/renderer/views/VodView.vue');
+  const player=await read('apps/desktop/src/renderer/views/PlayerView.vue');
+  assert.ok(sniffing.includes('onHeadersReceived'),'sniffing must inspect successful response headers');
+  assert.ok(sniffing.includes('MEDIA_TYPE')&&sniffing.includes('statusCode>=200'),'sniffing must accept verified media MIME responses');
+  for(const token of ['videoId:request.videoId','episodeId:request.episodeId','flag:request.flag'])assert.ok(main.includes(token),`failed diagnostics must retain ${token}`);
+  for(const token of ['vod.pendingPlayback','selectEpisodeFlag','episodePage.value=1','-webkit-line-clamp:2'])assert.ok(vod.includes(token),`VOD view missing ${token}`);
+  for(const token of ['readPendingPlayback','resumePendingPlayback','failureSourceName','lastFailedPending'])assert.ok(player.includes(token),`player recovery missing ${token}`);
+});
+
+test('icon materialization preserves supplied transparent pixels',async()=>{
+  const materializer=await read('scripts/materialize-app-icons.mjs');
+  assert.ok(materializer.includes('alpha-preserving multi-size ICO'),'transparent icon pipeline is not identified');
+  assert.doesNotMatch(materializer,/\.Clear\(\[Drawing\.Color\]::FromArgb\(255,245,245,245\)\)/,'icon pipeline must not repaint the transparent background');
+});

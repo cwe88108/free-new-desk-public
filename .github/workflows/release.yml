@@ -1,0 +1,55 @@
+name: Release
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify architecture, types, tests and renderer build
+        run: npm run verify
+      - name: Configure PlayerHost x64
+        run: cmake -S native/player-host -B native/player-host/build -A x64
+      - name: Build PlayerHost x64
+        run: cmake --build native/player-host/build --config Release
+      - name: Prepare pinned LGPL libmpv runtime
+        shell: pwsh
+        run: ./scripts/prepare-mpv.ps1
+      - name: Test PlayerHost Named Pipe
+        shell: pwsh
+        run: ./scripts/test-player-host.ps1
+      - name: Validate controlled video seek and clock
+        shell: pwsh
+        run: ./scripts/test-player-host-video.ps1
+      - name: Stress PlayerHost 100 media switches
+        shell: pwsh
+        run: ./scripts/test-player-host-switch-stress.ps1
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Package Windows x64
+        run: npm run package:win
+      - name: Smoke test packaged Electron renderer
+        run: npm run smoke:packaged
+      - name: Smoke test packaged UI navigation and screenshots
+        shell: pwsh
+        run: ./scripts/test-packaged-ui.ps1
+      - name: Checksums
+        shell: pwsh
+        run: Get-ChildItem dist/releases/*.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content dist/releases/SHA256SUMS.txt
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: gh release create "${{ github.ref_name }}" dist/releases/*.exe dist/releases/SHA256SUMS.txt --generate-notes

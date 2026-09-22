@@ -2,11 +2,12 @@
 import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
 import { useRoute,useRouter } from 'vue-router';
 import type { PlayerStats } from '@free-new-desk/contracts';
+import {startMusicPlaybackController,stopMusicPlaybackController} from './stores/music-playback.js';
 import appIconUrl from './assets/app-icon.png';
 
 const route=useRoute();
 const router=useRouter();
-const version=ref('1.4.13');
+const version=ref('1.4.17-rc.3');
 const isPackaged=ref(false);
 const sourceHealthy=ref<boolean|null>(null);
 const navigatingPath=ref('');
@@ -40,7 +41,8 @@ const mediaStatus=computed(()=>!playerReachable.value?'播放器未连接':playe
 function focusPageSearch(event:KeyboardEvent){if(!(event.ctrlKey||event.metaKey)||event.key.toLowerCase()!=='f')return;const target=event.target as HTMLElement|null;if(target&&['INPUT','SELECT','TEXTAREA'].includes(target.tagName))return;const input=document.querySelector<HTMLElement>('.content [data-search-input]:not([disabled])');if(!input)return;event.preventDefault();menuOpen.value=false;input.focus();input.scrollIntoView({block:'nearest'});}
 
 onMounted(async()=>{
-  try{const info=await window.desktop.app.getInfo();version.value=info.version;isPackaged.value=info.packaged;}catch{/* footer keeps v1.4.13 fallback */}
+  startMusicPlaybackController();
+  try{const info=await window.desktop.app.getInfo();version.value=info.version;isPackaged.value=info.packaged;}catch{/* footer keeps v1.4.14 fallback */}
   try{sourceHealthy.value=await window.desktop.source.ping();}catch{sourceHealthy.value=false;}
   removeHealthListener=window.desktop.source.onHealthChanged(value=>{sourceHealthy.value=value.ok;});
   removeNavigateListener=window.desktop.app.onNavigate(path=>{void router.push(path);});
@@ -49,7 +51,7 @@ onMounted(async()=>{
   window.addEventListener('keydown',focusPageSearch);
   await refreshPlayer();playerPoll=setInterval(refreshPlayer,1500);
 });
-onBeforeUnmount(()=>{removeHealthListener?.();removeNavigateListener?.();if(playerPoll)clearInterval(playerPoll);if(renderModeListener)window.removeEventListener('fnd:render-mode',renderModeListener);window.removeEventListener('keydown',focusPageSearch);});
+onBeforeUnmount(()=>{stopMusicPlaybackController();removeHealthListener?.();removeNavigateListener?.();if(playerPoll)clearInterval(playerPoll);if(renderModeListener)window.removeEventListener('fnd:render-mode',renderModeListener);window.removeEventListener('keydown',focusPageSearch);});
 </script>
 
 <template>
