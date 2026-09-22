@@ -18,16 +18,16 @@
 
 ## 界面预览
 
-下面截图展示公开版的主要界面。公共版默认没有内置影视源，所以首次启动看到的是干净的“空壳”状态；导入自己的 TVBox / FongMi / IPTV 配置后即可使用。
+以下为 V1.4.17 公开版打包应用的真实界面截图，均以 2× 设备比例采集，单张宽度为 2560 像素。公共版默认没有内置影视源，所以首次启动看到的是干净的“空壳”状态；导入自己的 TVBox / FongMi / IPTV 配置后即可使用。
 
 <table>
 <tr>
-<td width="50%"><img alt="首页" src="docs/screenshots/home.jpg"><br/><em>首页：版本、来源、系统状态与快速入口</em></td>
-<td width="50%"><img alt="音乐" src="docs/screenshots/music.jpg"><br/><em>音乐：本地 / SMB / WebDAV、封面、歌词与播放队列</em></td>
+<td width="50%"><img alt="V1.4.17 首页" src="docs/screenshots/v1.4.17-home.jpg"><br/><em>首页：版本、来源、系统状态与快速入口</em></td>
+<td width="50%"><img alt="V1.4.17 音乐" src="docs/screenshots/v1.4.17-music.jpg"><br/><em>音乐：本地 / SMB / WebDAV、封面、歌词与播放队列</em></td>
 </tr>
 <tr>
-<td width="50%"><img alt="播放器" src="docs/screenshots/player.jpg"><br/><em>播放器：原生 PlayerHost / libmpv、硬件解码与播放控制</em></td>
-<td width="50%"><img alt="来源管理" src="docs/screenshots/sources.jpg"><br/><em>来源管理：配置导入、兼容性检查与批量管理</em></td>
+<td width="50%"><img alt="V1.4.17 播放器" src="docs/screenshots/v1.4.17-player.jpg"><br/><em>播放器：原生 PlayerHost / libmpv、硬件解码与播放控制</em></td>
+<td width="50%"><img alt="V1.4.17 来源管理" src="docs/screenshots/v1.4.17-sources.jpg"><br/><em>来源管理：配置导入、兼容性检查与批量管理</em></td>
 </tr>
 </table>
 
