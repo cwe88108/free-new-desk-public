@@ -44,3 +44,32 @@ test('Windows mpv preparation validates downloaded archive and extracted DLL bef
   await metadata('wrong-archive',dll);
   await assert.rejects(()=>prepareMpvRuntime(root),/archive SHA256 mismatch/);
 });
+test('vendored archive is required, hash checked, and never replaced by a download',async t=>{
+  const {root,runtime,metadata}=await fixture(t);
+  await metadata('controlled-archive','dll');
+  const source=path.join(runtime,'SOURCE.txt');
+  await writeFile(source,(await readFile(source,'utf8'))+'vendored archive: pinned.7z\n');
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=()=>{throw new Error('vendored runtime must not access network');};
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  await assert.rejects(()=>prepareMpvRuntime(root),/ENOENT/);
+  const vendor=path.join(root,'third_party','mpv','vendor');await mkdir(vendor);
+  await writeFile(path.join(vendor,'pinned.7z'),'tampered');
+  await assert.rejects(()=>prepareMpvRuntime(root),/archive SHA256 mismatch/);
+  await writeFile(source,(await readFile(source,'utf8')).replace('vendored archive: pinned.7z','vendored archive: ../pinned.7z'));
+  await assert.rejects(()=>prepareMpvRuntime(root),/Invalid vendored archive/);
+});
+test('Windows clean checkout prepares the real vendored DLL without network or cache',{skip:process.platform!=='win32'},async t=>{
+  const {root,runtime}=await fixture(t);
+  const sourceRoot=path.resolve(import.meta.dirname,'../..');
+  const source=await readFile(path.join(sourceRoot,'third_party/mpv/win-x64/SOURCE.txt'),'utf8');
+  await writeFile(path.join(runtime,'SOURCE.txt'),source);
+  const name=source.match(/^vendored archive:\s*(.+)$/m)[1].trim();
+  const vendor=path.join(root,'third_party/mpv/vendor');await mkdir(vendor);
+  await writeFile(path.join(vendor,name),await readFile(path.join(sourceRoot,'third_party/mpv/vendor',name)));
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=()=>{throw new Error('cold-cache test must be offline');};
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  await prepareMpvRuntime(root);
+  assert.equal(sha(await readFile(path.join(runtime,'libmpv-2.dll'))),source.match(/^dll sha256:\s*(.+)$/m)[1].trim());
+});

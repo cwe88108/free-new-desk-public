@@ -42,6 +42,7 @@ function basicTagsFromRelative(relative:string):Pick<MusicTrack,'title'|'artist'
 async function firstExisting(paths:string[]):Promise<string|undefined>{for(const candidate of paths)try{const info=await stat(candidate);if(info.isFile())return candidate;}catch{/* optional sidecar */}return undefined;}
 function throwIfAborted(signal:AbortSignal):void{if(signal.aborted)throw signal.reason instanceof Error?signal.reason:new DOMException('音乐扫描已取消','AbortError');}
 function credentialSettingKey(ref:string):string{return`music.credential.${ref}`;}
+const musicCredentialUpdate=MusicNetworkSourceRequestSchema.pick({username:true,password:true,rememberCredential:true});
 function encodeCredential(credentials:MusicCredentials):string{if(!safeStorage.isEncryptionAvailable())throw new Error('Windows 安全凭据加密当前不可用，无法持久保存音乐来源密码');return safeStorage.encryptString(JSON.stringify(credentials)).toString('base64');}
 function decodeCredential(value:string):MusicCredentials|undefined{try{if(!safeStorage.isEncryptionAvailable())return;const parsed=JSON.parse(safeStorage.decryptString(Buffer.from(value,'base64'))) as Record<string,unknown>;return{...(typeof parsed.username==='string'?{username:parsed.username}:{}),...(typeof parsed.password==='string'?{password:parsed.password}:{})};}catch{return;}}
 function credentialsFor(source:MusicSource):MusicCredentials|undefined{const transient=transientCredentials.get(source.id);if(transient)return transient;if(!source.credentialRef)return;const saved=db().getSetting(credentialSettingKey(source.credentialRef));return saved?decodeCredential(saved):undefined;}
@@ -57,7 +58,7 @@ const scanTasks=new Map<string,{job:MusicScanJob;controller:AbortController;work
 let scansClosing=false;
 function jobKey(id:string){return 'music.scan.job.'+id;}
 function scanSourceRevision(source:MusicSource):string{return createHash('sha256').update(JSON.stringify({kind:source.kind,root:pathKey(source.root)})).digest('hex').slice(0,24);}
-function credentialFailure(error:unknown):boolean{const message=error instanceof Error?error.message:String(error);return /(?:1219|1326|logon failure|user name or password|用户名或密码|凭据|credential|authentication|access denied|拒绝访问)/i.test(message);}
+function credentialFailure(error:unknown):boolean{const message=error instanceof Error?error.message:String(error);return /(?:1219|1326|logon failure|user name or password|用户名或密码|凭据|credential|authentication|身份验证失败|access denied|拒绝访问)/i.test(message);}
 function scanErrorCategory(error:unknown):NonNullable<MusicScanJob['errorCategory']>{const message=error instanceof Error?error.message:String(error);if(credentialFailure(message))return 'auth';if(/timeout|超时|timed out/i.test(message))return 'timeout';if(/offline|unreachable|not found|network|ENET|EHOST|断网|离线/i.test(message))return 'offline';if(/tag|metadata|parse|解析/i.test(message))return 'parse';return 'io';}
 function storedJob(id:string):MusicScanJob|undefined{try{const value=db().getSetting(jobKey(id));return value?JSON.parse(value) as MusicScanJob:undefined;}catch{return;}}
 function sourceWithJob(source:MusicSource):MusicSource{const job=scanTasks.get(source.id)?.job??storedJob(source.id);return job?{...source,scanJob:job}:source;}
@@ -133,8 +134,8 @@ function queueScan(sourceId:string):{count:number;truncated:boolean;jobId:string
     worker.postMessage({type:'start',source:{...source,credentialRef:undefined},existing,...(job.checkpoint?{checkpoint:job.checkpoint}:{})});
   }catch(error){
     if(!current())return;
-    const category=scanErrorCategory(error);job.errorCategory=category;const state:MusicScanJob['state']=source.kind==='smb'&&credentialFailure(error)?'awaiting_credentials':['offline','timeout'].includes(category)?'interrupted':'failed';
-    finish(state,state==='awaiting_credentials'?'NAS 凭据无效或已过期；请更新凭据后继续扫描':state==='interrupted'?'网络暂时不可用；已保存 checkpoint，可恢复后继续扫描':error instanceof Error?error.message:String(error));
+    const category=scanErrorCategory(error);job.errorCategory=category;const state:MusicScanJob['state']=source.kind!=='local'&&category==='auth'?'awaiting_credentials':['offline','timeout'].includes(category)?'interrupted':'failed';
+    finish(state,state==='awaiting_credentials'?'网络音乐来源验证失败，请更新凭据后重新扫描。':state==='interrupted'?'网络暂时不可用；已保存 checkpoint，可恢复后继续扫描':error instanceof Error?error.message:String(error));
   }})();});
   return{count:database.musicTrackCount(sourceId),truncated:false,jobId:job.jobId,queued:true};
 }
@@ -180,6 +181,24 @@ export function registerMusicIpc():void{if(registered)return;registered=true;rec
   ipcMain.handle('music:listSources' ,event=>{requireLocalSender(event);return db().listMusicSources().map(sourceWithJob);});
   ipcMain.handle('music:addLocalSource',async event=>{requireLocalSender(event);const selected=await dialog.showOpenDialog({title:'添加本地音乐文件夹',properties:['openDirectory']});const selectedRoot=selected.filePaths[0];if(selected.canceled||!selectedRoot)return{canceled:true};const root=await canonicalRoot(selectedRoot),database=db(),duplicate=database.listMusicSources().find(item=>item.kind==='local'&&pathKey(item.root)===pathKey(root));if(duplicate){const scanned=queueScan(duplicate.id);return{canceled:false,duplicate:true,source:database.listMusicSources().find(item=>item.id===duplicate.id)??duplicate,...scanned};}const now=new Date().toISOString(),source:MusicSource={id:randomUUID(),name:path.basename(root)||root,kind:'local',root,enabled:true,createdAt:now,updatedAt:now,scanState:'idle'};database.saveMusicSource(source);const scanned=queueScan(source.id);return{canceled:false,source:database.listMusicSources().find(item=>item.id===source.id)??source,...scanned};});
   ipcMain.handle('music:addNetworkSource',async(event,input)=>{requireLocalSender(event);return addNetworkSource(input);});
+  ipcMain.handle('music:updateCredentials',(event,input)=>{
+    requireLocalSender(event);
+    const request=input as {sourceId?:unknown}|null;
+    const database=db();
+    const source=database.listMusicSources().find(item=>item.id===request?.sourceId);
+    if(!source||source.kind==='local')throw new Error('网络音乐来源不存在');
+    if(scanTasks.has(source.id))throw new Error('请等待当前扫描结束后更新凭据');
+    const {username,password,rememberCredential}=musicCredentialUpdate.parse(request);
+    const account=username?.trim();
+    if(source.kind==='webdav'&&password&&!account)throw new Error('请输入 WebDAV 用户名');
+    const credentials:MusicCredentials={...(account?{username:account}:{}),...(password?{password}:{})};
+    const stored=rememberCredential&&credentials.username?{ref:source.credentialRef??randomUUID(),encrypted:encodeCredential(credentials)}:undefined;
+    database.replaceMusicCredential(source.id,stored);
+    if(credentials.username||credentials.password)transientCredentials.set(source.id,credentials);
+    else transientCredentials.delete(source.id);
+    const scan=queueScan(source.id);
+    return {source:sourceWithJob(database.listMusicSources().find(item=>item.id===source.id)!),count:scan.count,truncated:scan.truncated};
+  });
   ipcMain.handle('music:scan',async(event,input)=>{requireLocalSender(event);const sourceId=String((input as{sourceId?:unknown}|undefined)?.sourceId??'');if(!sourceId)throw new Error('缺少音乐来源');return queueScan(sourceId);});
   ipcMain.handle('music:syncDiagnostics',(event,input)=>{requireLocalSender(event);const value=input as Record<string,unknown>;musicSyncDiagnostics={updatedAt:new Date().toISOString(),activeIndex:Number(value.activeIndex),offset:Number(value.offset),stale:Boolean(value.stale),sampleAgeMs:Number(value.sampleAgeMs),rejected:Number(value.rejected),timeBase:value.timeBase==='file'?'file':'track',reason:typeof value.reason==='string'?value.reason.slice(0,80):''};return true;});
   ipcMain.handle('music:pauseScan',(event,input)=>{requireLocalSender(event);const id=String((input as {sourceId?:string})?.sourceId??'');const task=scanTasks.get(id);if(!task)return false;task.job.state='paused';task.controller.abort();return true;});

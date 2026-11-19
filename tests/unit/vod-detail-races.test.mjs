@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {parse} from '@vue/compiler-sfc';
+import {cmsCategoryCandidates} from '../../packages/contracts/dist/index.js';
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
 const detail=id=>({id,name:id,episodes:[{id:'episode',flag:'route',name:'Episode'}]});
@@ -14,8 +15,8 @@ async function view(name,requests={},favorites=async()=>false){
   const nodes=source.statements.filter(node=>ts.isFunctionDeclaration(node)&&wanted.has(node.name?.text));
   assert.equal(nodes.length,wanted.size);
   const saved=[],routes=[],calls=[],state={};
-  for(const [key,value]of Object.entries({sourceId:'A',detail:null,favorite:false,error:'',detailSource:'',detailSourceName:'',groups:[{sourceId:'A',sourceName:'A'},{sourceId:'B',sourceName:'B'}],selectedFlag:'',episodePage:1,categoryId:'',manualCategoryId:'',categoryPage:1,pageInput:1,categoryHasMore:false,totalPages:1,totalItems:null,filterValues:{},mode:'home',loading:false,homeMeta:null,items:[],showFilters:false,sortMode:'default'}))state[key]={value};
-  const context={...state,console,isVodFavorite:favorites,saveSession:value=>saved.push(value),readSession:()=>({}),localStorage:{setItem:()=>{}},router:{replace:value=>{routes.push(value);return Promise.resolve();}},window:{desktop:{source:{
+  for(const [key,value]of Object.entries({selectedSource:null,categories:[],sourceId:'A',detail:null,favorite:false,error:'',detailSource:'',detailSourceName:'',groups:[{sourceId:'A',sourceName:'A'},{sourceId:'B',sourceName:'B'}],selectedFlag:'',episodePage:1,categoryId:'',manualCategoryId:'',categoryPage:1,pageInput:1,categoryHasMore:false,totalPages:1,totalItems:null,filterValues:{},mode:'home',loading:false,homeMeta:null,items:[],showFilters:false,sortMode:'default'}))state[key]={value};
+  const context={...state,console,cmsCategoryCandidates,toast:{info:()=>{}},isVodFavorite:favorites,saveSession:value=>saved.push(value),readSession:()=>({}),localStorage:{setItem:()=>{}},router:{replace:value=>{routes.push(value);return Promise.resolve();}},window:{desktop:{source:{
     detail:(source,ids)=>{calls.push({kind:'detail',source,ids});return requests.detail(source,ids[0]);},
     home:source=>{calls.push({kind:'home',source});return requests.home(source);},
     category:(source,category,page,filters)=>{calls.push({kind:'category',source,category,page,filters});return requests.category(source,category,page,filters);},
@@ -25,6 +26,56 @@ async function view(name,requests={},favorites=async()=>false){
   return{...context.api,state,saved,routes,calls};
 }
 function open(v,name,source,id){if(name==='VodView'){v.state.sourceId.value=source;return v.openVideo({id,name:id});}if(name==='FavoritesView')return v.open({sourceId:source,videoId:id});return v.open(source,{id,name:id});}
+
+test('CMS parent selection sends the declared leaf to IPC, clears parent filters and resets restored page',async()=>{
+  const v=await view('VodView',{category:async()=>({items:[{id:'film'}],page:1,hasMore:true,totalPages:4})});
+  v.state.selectedSource.value={kind:'T1_JSON'};v.state.categories.value=[{id:'p',name:'电影'},{id:'c',name:'动作片',parentId:'p'}];
+  v.state.categoryId.value='p';v.state.filterValues.value={year:'stale'};
+  await v.loadCategory(7);
+  assert.equal(v.calls[0].category,'c');assert.equal(v.calls[0].page,1);assert.equal(Object.keys(v.calls[0].filters).length,0);assert.equal(v.state.categoryId.value,'c');
+  await v.loadCategory(2);assert.equal(v.calls[1].category,'c');assert.equal(v.calls[1].page,2);
+});
+
+test('script sources keep their parent IDs and filters unchanged',async()=>{
+  const v=await view('VodView',{category:async()=>({items:[],page:2,hasMore:false})});
+  v.state.selectedSource.value={kind:'T3_JS'};v.state.categories.value=[{id:'p',name:'电影'},{id:'c',name:'动作片',parentId:'p'}];
+  v.state.categoryId.value='p';v.state.filterValues.value={year:'2026'};await v.loadCategory(2);
+  assert.equal(v.calls[0].category,'p');assert.equal(v.calls[0].page,2);assert.equal(v.calls[0].filters.year,'2026');
+});
+
+test('empty CMS group starts at the next declared leaf and keeps it for pagination',async()=>{
+  const v=await view('VodView',{category:async(_source,id,page)=>({items:id==='full'?[{id:'movie'}]:[],page,hasMore:true})});
+  v.state.selectedSource.value={kind:'T1_JSON'};
+  v.state.categories.value=[{id:'films',name:'电影'},{id:'empty',name:'空子类',parentId:'films'},{id:'full',name:'可用子类',parentId:'films'}];
+  v.state.categoryId.value='films';
+  await v.loadCategory();
+  assert.equal(v.state.categoryId.value,'full');
+  await v.loadCategory(2);
+  assert.deepEqual(v.calls.map(call=>[call.category,call.page]),[['empty',1],['full',1],['full',2]]);
+  v.state.categoryId.value='empty';
+  await v.loadCategory();
+  assert.equal(v.state.categoryId.value,'empty');
+  assert.equal(v.calls.length,4);
+});
+
+test('a stale category fallback cannot replace a newer category selection',async()=>{
+  const delayed=deferred(),started=deferred();
+  const v=await view('VodView',{category:async(_source,id,page)=>{
+    if(id==='full'){started.resolve();return delayed.promise;}
+    return {items:id==='selected'?[{id:'new'}]:[],page,hasMore:false};
+  }});
+  v.state.selectedSource.value={kind:'T1_JSON',categories:['电影']};
+  v.state.categories.value=[{id:'films',name:'电影'},{id:'empty',name:'空子类',parentId:'films'},{id:'full',name:'可用子类',parentId:'films'},{id:'selected',name:'直接分类'}];
+  v.state.categoryId.value='films';
+  const first=v.loadCategory();
+  await started.promise;
+  v.state.categoryId.value='selected';
+  await v.loadCategory();
+  delayed.resolve({items:[{id:'old'}],page:1,hasMore:false});
+  await first;
+  assert.equal(v.state.categoryId.value,'selected');
+  assert.equal(v.state.items.value[0].id,'new');
+});
 
 for(const name of ['VodView','SearchView','FavoritesView']){
   test(name+' ignores old details and errors after another title/source is selected',async()=>{

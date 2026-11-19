@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
+import { computed,onBeforeUnmount,onMounted,ref,watch } from 'vue';
+import {clockRuntime} from './stores/playback-session';
+import {nowPlayingTitle} from './now-playing-title';
+import type {PlaybackHistoryEntry} from '@free-new-desk/contracts';
 import { useRoute,useRouter } from 'vue-router';
-import type { PlayerStats } from '@free-new-desk/contracts';
-import {startMusicPlaybackController,stopMusicPlaybackController} from './stores/music-playback.js';
+import {startMusicPlaybackController,stopMusicPlaybackController,clockStats,clockStale,refreshPlaybackClock} from './stores/music-playback.js';
 import { useToastStore } from './stores/toast';
 import appIconUrl from './assets/app-icon.png';
 import ToastHost from './components/ToastHost.vue';
@@ -12,15 +14,14 @@ import AppIcon from './components/AppIcon.vue';
 
 const route=useRoute();
 const router=useRouter();
-const version=ref('1.5.0');
+const version=ref('');
 const isPackaged=ref(false);
 const sourceHealthy=ref<boolean|null>(null);
 const navigatingPath=ref('');
 const menuOpen=ref(false);
 const renderMode=ref(localStorage.getItem('player.hwdec')==='off'?'软件解码（CPU）':'硬件加速（GPU）');
-const playerStats=ref<PlayerStats|null>(null);
-const playerReachable=ref(false);
-let playerPoll:ReturnType<typeof setInterval>|undefined;
+const playerStats=clockStats;
+const playerReachable=computed(()=>!clockStale.value&&clockStats.value?.sampleFresh===true);
 let removeSourcesListener:(()=>void)|undefined;
 let removeHealthListener:(()=>void)|undefined;
 let removeNavigateListener:(()=>void)|undefined;
@@ -45,11 +46,25 @@ const systemItems=[
 const current=computed(()=>route.path);
 async function navigate(path:string){if(navigatingPath.value||current.value===path)return;navigatingPath.value=path;const started=performance.now();try{await router.push(path);const elapsed=performance.now()-started;void window.desktop.diagnostics.recordPerformance('navigationMs',elapsed).catch(()=>false);if(window.desktop.app.isUiSmoke()&&elapsed>100)throw new Error(`Navigation exceeded 100ms budget: ${path} ${elapsed.toFixed(1)}ms`);}finally{requestAnimationFrame(()=>{navigatingPath.value='';});}}
 async function appAction(action:'reload'|'devtools'|'quit'){menuOpen.value=false;await window.desktop.app.action(action);}
-async function refreshPlayer(){try{playerStats.value=await window.desktop.playback.query('stats');playerReachable.value=true;}catch{playerReachable.value=false;}}
+async function refreshPlayer(){await refreshPlaybackClock().catch(()=>undefined);}
 async function playerControl(command:'pause'|'mute',value:boolean){await window.desktop.playback.control({command,value});await refreshPlayer();}
 async function setVolume(event:Event){const value=Number((event.target as HTMLInputElement).value);await window.desktop.playback.control({command:'volume',value});await refreshPlayer();}
-const mediaStatus=computed(()=>!playerReachable.value?'播放器未连接':playerStats.value?.duration||playerStats.value?.path?(playerStats.value?.paused?'已暂停':'播放中'):'空闲');
-const nowPlayingName=computed(()=>{const path=playerStats.value?.path;if(!path)return'';const segment=path.split(/[\\/]/).filter(Boolean).pop()??'';return segment.replace(/\.[a-z0-9]{1,5}$/i,'')||segment;});
+const mediaStatus=computed(()=>{
+  const status=clockRuntime.value.status;
+  if(status==='ended')return '播放结束';
+  if(status==='failed')return '播放失败';
+  if(status==='loading')return '正在连接';
+  if(status==='stopped')return '已停止';
+  if(!playerReachable.value)return '播放器未连接';
+  return playerStats.value?.duration||playerStats.value?.path?(playerStats.value?.paused?'已暂停':'播放中'):'空闲';
+});
+const nowPlayingHistory=ref<PlaybackHistoryEntry|null>(null);
+watch([()=>clockRuntime.value.requestId,()=>clockRuntime.value.historyId],async(_value,_old,onCleanup)=>{
+  let active=true;onCleanup(()=>{active=false;});nowPlayingHistory.value=null;
+  const {historyId,domain}=clockRuntime.value;if(domain!=='vod'||!historyId)return;
+  try{const rows=await window.desktop.history.list(200);if(active)nowPlayingHistory.value=rows.find(item=>item.id===historyId)??null;}catch{/* Playback does not depend on presentation metadata. */}
+},{immediate:true});
+const nowPlayingName=computed(()=>nowPlayingTitle(playerStats.value?.path,nowPlayingHistory.value,clockRuntime.value));
 const nowPlayingVisible=computed(()=>Boolean(playerReachable.value&&playerStats.value?.path));
 function focusPageSearch(event:KeyboardEvent){if(!(event.ctrlKey||event.metaKey)||event.key.toLowerCase()!=='f')return;const target=event.target as HTMLElement|null;if(target&&['INPUT','SELECT','TEXTAREA'].includes(target.tagName))return;const input=document.querySelector<HTMLElement>('.content [data-search-input]:not([disabled])');if(!input)return;event.preventDefault();menuOpen.value=false;input.focus();input.scrollIntoView({block:'nearest'});}
 
@@ -57,16 +72,16 @@ onMounted(async()=>{
   const pageState=usePageStateStore();
   removeSourcesListener=window.desktop.source.onChanged(()=>{for(const key of ['vod','live','search'])pageState.clear(key);});
   startMusicPlaybackController();
-  try{const info=await window.desktop.app.getInfo();version.value=info.version;isPackaged.value=info.packaged;}catch{/* footer keeps the current release fallback */}
-  try{sourceHealthy.value=await window.desktop.source.ping();}catch{sourceHealthy.value=false;}
+  try{const info=await window.desktop.app.getInfo();version.value=info.version;isPackaged.value=info.packaged;}catch{/* keep the version unconfirmed if runtime information is unavailable */}
+  void window.desktop.source.ping().then(ok=>{sourceHealthy.value=ok;},()=>{sourceHealthy.value=false;});
   removeHealthListener=window.desktop.source.onHealthChanged(value=>{sourceHealthy.value=value.ok;});
   removeNavigateListener=window.desktop.app.onNavigate(path=>{void router.push(path);});
   renderModeListener=(event:Event)=>{const value=(event as CustomEvent<string>).detail;renderMode.value=value==='no'?'软件解码（CPU）':'硬件加速（GPU）';};
   window.addEventListener('fnd:render-mode',renderModeListener);
   window.addEventListener('keydown',focusPageSearch);
-  await refreshPlayer();playerPoll=setInterval(refreshPlayer,1500);
+  await refreshPlayer();
 });
-onBeforeUnmount(()=>{stopMusicPlaybackController();removeSourcesListener?.();removeHealthListener?.();removeNavigateListener?.();if(playerPoll)clearInterval(playerPoll);if(renderModeListener)window.removeEventListener('fnd:render-mode',renderModeListener);window.removeEventListener('keydown',focusPageSearch);});
+onBeforeUnmount(()=>{stopMusicPlaybackController();removeSourcesListener?.();removeHealthListener?.();removeNavigateListener?.();if(renderModeListener)window.removeEventListener('fnd:render-mode',renderModeListener);window.removeEventListener('keydown',focusPageSearch);});
 </script>
 
 <template>
@@ -115,14 +130,14 @@ onBeforeUnmount(()=>{stopMusicPlaybackController();removeSourcesListener?.();rem
       <span class="status-detail" tabindex="0">
         <span>运行详情</span>
         <span class="status-detail-pop" role="tooltip">
-          <span>当前版本</span><b>V{{version}}<template v-if="isPackaged"> · 安装版</template></b>
+          <span>当前版本</span><b>{{version?'V'+version:'版本待确认'}}<template v-if="isPackaged"> · 安装版</template></b>
           <span>播放器内核</span><b>PlayerHost C++ x64</b>
           <span>渲染模式</span><b>{{renderMode}}</b>
           <span>媒体状态</span><b>{{mediaStatus}}</b>
           <span>诊断与日志</span><b>设置 → 系统诊断</b>
         </span>
       </span>
-      <span>V{{version}}</span>
+      <span>{{version?'V'+version:'版本待确认'}}</span>
     </footer>
   </div>
   <ToastHost/>

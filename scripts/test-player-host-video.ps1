@@ -27,14 +27,30 @@ function Wait-Position([double]$Target,[double]$Tolerance=1.5,[int]$TimeoutMs=50
   while([DateTime]::UtcNow -lt $deadline){$stats=Read-Stats;if([Math]::Abs([double]$stats.position-$Target) -le $Tolerance){return $stats};Start-Sleep -Milliseconds 75}
   throw "Seek did not converge to $Target seconds"
 }
+function Wait-Eof([string]$LoadId,[int]$TimeoutSeconds){
+  $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  do {
+    $state=(Invoke-Player @{id='video-eof';method='player.query';params=@{query='load-status'}}).result
+    if($state.loadId -eq $LoadId -and $state.status -eq 'ended' -and $state.error -eq 'eof'){return}
+    Start-Sleep -Milliseconds 100
+  } while([DateTime]::UtcNow -lt $deadline)
+  throw "Expected natural EOF for load $LoadId, observed $($state|ConvertTo-Json -Compress)"
+}
 
 $process=Start-Process -FilePath $exe -ArgumentList @('--pipe',$pipe,'--test-audio-output','null') -PassThru -WindowStyle Hidden
 try{
   $mediaUri=([Uri]$video).AbsoluteUri
+  $live=(Invoke-Player @{id='live-load';method='player.load';params=@{url=$mediaUri;profile='live'}}).result
+  if(-not $live.accepted -or -not $live.loadId){throw 'PlayerHost did not accept live profile'}
+  Wait-Loaded ([string]$live.loadId)
+  $liveStats=Read-Stats
+  if($liveStats.cacheMaxBytes -ne 134217728 -or $liveStats.cacheBackUsesForward -ne $false){throw 'The live forward cache is not isolated at 128 MiB'}
   $load=(Invoke-Player @{id='video-load';method='player.load';params=@{url=$mediaUri;profile='vod'}}).result
   if(-not $load.accepted -or -not $load.loadId){throw 'PlayerHost did not accept controlled video'}
   Wait-Loaded ([string]$load.loadId)
   $stats=Read-Stats
+  if($stats.cacheMaxBytes -ne 536870912 -or $stats.cacheBackUsesForward -ne $true){throw 'Switching to VOD did not restore the default cache policy'}
+  Write-Host 'PlayerHost reported exact limits switching from live (128 MiB) to VOD (512 MiB).'
   if([int]$stats.width -ne $width -or [int]$stats.height -ne $height){throw "Unexpected video geometry: $($stats.width)x$($stats.height)"}
   if([double]$stats.duration -lt 10){throw "Controlled video duration too short: $($stats.duration)"}
   [void](Invoke-Player @{id='video-pause';method='player.command';params=@{command='pause';value=$true}})
@@ -45,6 +61,15 @@ try{
   if($after-$before -lt 0.5){throw "Playback clock did not advance: before=$before after=$after"}
   $final=Read-Stats
   Write-Host ("PlayerHost controlled-video validation passed: {0}x{1}, duration={2:N2}s, seek 10%->85%->20%, clock advanced {3:N2}s." -f $final.width,$final.height,$duration,($after-$before))
+  $seek=(Invoke-Player @{id='video-seek-to-tail';method='player.command';params=@{command='seek';value=($duration-1.5);absolute=$true;loadId=$load.loadId}}).result
+  if(!$seek.ok){throw 'Could not position video near its end'}
+  Wait-Eof $load.loadId 8
+  Write-Host 'PlayerHost reported natural EOF for the exact VOD load.'
+  $finiteLive=(Invoke-Player @{id='finite-live-load';method='player.load';params=@{url=$mediaUri;profile='live'}}).result
+  if(!$finiteLive.accepted -or !$finiteLive.loadId){throw 'PlayerHost did not accept the finite live fixture'}
+  Wait-Loaded ([string]$finiteLive.loadId)
+  Wait-Eof $finiteLive.loadId 18
+  Write-Host 'PlayerHost reported natural EOF for the exact live load.'
 } finally {
   if($process -and -not $process.HasExited){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;[void]$process.WaitForExit(10000)}
   Remove-Item $video -Force -ErrorAction SilentlyContinue

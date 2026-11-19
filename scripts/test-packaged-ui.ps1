@@ -162,6 +162,40 @@ try {
   throw "Packaged UI smoke made no progress before the watchdog expired. Last title: '$lastTitle'; captured: $([string]::Join(',', $seen))"
 } finally {
   if ($null -eq $previousSmoke) { Remove-Item Env:FND_UI_SMOKE -ErrorAction SilentlyContinue } else { $env:FND_UI_SMOKE = $previousSmoke }
+  # Flush is requested by the renderer only after the measured operation settles.
+  # A hung/crashed renderer may not acknowledge it; retain partial stage evidence then.
+  $flushDeadline = [DateTime]::UtcNow.AddSeconds(2)
+  $flushAcknowledged = $false
+  do {
+    $flushAcknowledged = @(Get-ChildItem -LiteralPath $smokeDir -Filter 'surface-timing-flushed.json' -Recurse -File -ErrorAction SilentlyContinue).Count -gt 0
+    if ($flushAcknowledged -or -not $process -or $process.HasExited) { break }
+    Start-Sleep -Milliseconds 50
+  } while ([DateTime]::UtcNow -lt $flushDeadline)
+  Write-Host "Surface timing flush acknowledged: $flushAcknowledged (false means partial evidence only)"
   if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+  # Persist only numeric surface stage diagnostics, never the app log/database/URLs.
+  # This finally path runs after failures too, including scales with image capture disabled.
+  # Node preserves ISO timestamp strings; PowerShell ConvertFrom-Json can turn
+  # them into DateTime objects and silently reject every line in a string filter.
+  $collector = Join-Path $PSScriptRoot 'collect-surface-timing.mjs'
+  $previousExitCode = $LASTEXITCODE
+  $collectorExitCode = 1
+  try {
+    & node $collector $smokeDir $captureDir $capturePrefix ($flushAcknowledged.ToString().ToLowerInvariant())
+    $collectorExitCode = $LASTEXITCODE
+  } catch {
+    Write-Warning 'Surface timing collector could not run; evidence is unavailable.'
+  } finally {
+    $global:LASTEXITCODE = $previousExitCode
+  }
+  if ($collectorExitCode -ne 0) { Write-Warning 'Surface timing evidence is incomplete or collection failed. Inspect the surface-evidence report; a flush ACK alone does not prove collection.' }
+  $performanceFiles = @(Get-ChildItem -LiteralPath $smokeDir -Filter 'performance-runtime.json' -Recurse -File -ErrorAction SilentlyContinue)
+  if ($performanceFiles.Count -ne 1) { throw 'Expected exactly one sanitized performance-runtime.json from the packaged UI smoke.' }
+  $performance = Get-Content -LiteralPath $performanceFiles[0].FullName -Raw | ConvertFrom-Json
+  if ($performance.schemaVersion -ne 1 -or $performance.workload -ne 'packaged-ui-smoke-v1' -or $performance.durationMs -le 0) { throw 'Packaged UI performance telemetry envelope is invalid.' }
+  if ($performance.counters.playbackStatsIpcCalls -le 0 -or $performance.uiMetrics.navigationMs.count -lt 8 -or $performance.uiMetrics.rendererFrameP95Ms.count -lt 1) { throw 'Packaged UI performance telemetry is missing navigation, playback IPC, or frame samples.' }
+  $performanceOutput = Join-Path $captureDir ($capturePrefix + '-performance.json')
+  Copy-Item -LiteralPath $performanceFiles[0].FullName -Destination $performanceOutput -Force
+  Write-Host ("Performance evidence: durationMs={0}, playbackStatsIpcCalls={1}, playerHostStatsQueryCalls={2}, navigationP95Ms={3}, frameP95Ms={4}, frameOver33MsRate={5}" -f $performance.durationMs, $performance.counters.playbackStatsIpcCalls, $performance.counters.playerHostStatsQueryCalls, $performance.uiMetrics.navigationMs.p95, $performance.uiMetrics.rendererFrameP95Ms.p95, $performance.uiMetrics.rendererFrameOver33MsRate.p95)
   Write-Host "Smoke data retained for diagnosis: $smokeDir"
 }

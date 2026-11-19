@@ -1,6 +1,6 @@
 import type { CategoryResult,DetailResult,HomeResult,SearchResult } from '@free-new-desk/contracts';
 import { BaseAdapter } from './base.js';
-import { buildUrl,jsonDetail,jsonList,numberValue,parseCmsCategories,parseCmsFilters,parseCmsJson,parseCmsXml,parseCmsXmlCategories,videoBlocks,xmlDetail,type CmsJsonPayload } from './common.js';
+import { buildUrl,extractTag,jsonDetail,jsonList,numberValue,parseCmsCategories,parseCmsFilters,parseCmsJson,parseCmsXml,parseCmsXmlCategories,stringValue,videoBlocks,xmlDetail,type CmsJsonPayload } from './common.js';
 export{parseCmsCategories,parseCmsFilters,parseCmsJson,parseCmsXml,parseCmsXmlCategories};
 export type{CmsJsonPayload};
 
@@ -32,30 +32,52 @@ function categoryParams(categoryId:string,page:number,filters:Record<string,stri
   return{...clean,ac:'detail',t:categoryId,pg:page,...(Object.keys(clean).length?{f:JSON.stringify(clean)}:{})};
 }
 
+type CmsResponse={xml:string}|{json:CmsJsonPayload};
+const cmsXmlRoot=/^\s*(?:<\?xml\b[^?]*\?>\s*)?<(?:rss|list|class)(?=[\s/>])/i;
+function cmsItems(payload:CmsResponse){return 'xml' in payload?parseCmsXml(payload.xml):parseCmsJson(payload.json);}
+function cmsCategories(payload:CmsResponse){return 'xml' in payload?parseCmsXmlCategories(payload.xml):parseCmsCategories(payload.json);}
+function cmsFilters(payload:CmsResponse){return 'xml' in payload?{}:parseCmsFilters(payload.json);}
+function cmsDetail(payload:CmsResponse,ids:string[]):DetailResult{
+  if('xml' in payload){
+    const block=videoBlocks(payload.xml).find(item=>ids.includes(extractTag(item,'id')||extractTag(item,'vod_id')));
+    if(block)return xmlDetail(block);
+  }else{
+    const item=jsonList(payload.json).find(value=>ids.includes(stringValue(value.vod_id??value.id??value.path)));
+    if(item)return jsonDetail(item);
+  }
+  throw new Error('CMS 来源未返回指定影片');
+}
+
 export class CmsJsonAdapter extends BaseAdapter{
-  async #load(params:Record<string,string|number|undefined>,signal?:AbortSignal):Promise<CmsJsonPayload>{return this.broker.json<CmsJsonPayload>({sourceId:this.sourceId(),url:buildUrl(this.endpoint,params),retries:1,...(signal?{signal}:{})});}
+  async #load(params:Record<string,string|number|undefined>,signal?:AbortSignal):Promise<CmsResponse>{
+    const text=await this.broker.text({sourceId:this.sourceId(),url:buildUrl(this.endpoint,params),retries:1,...(signal?{signal}:{})});
+    return cmsXmlRoot.test(text)?{xml:text}:{json:JSON.parse(text) as CmsJsonPayload};
+  }
   async getHome(signal?:AbortSignal):Promise<HomeResult>{
     const payload=await this.#load({ac:'detail'},signal);
-    let categories=parseCmsCategories(payload),filters=parseCmsFilters(payload);
+    let categories=cmsCategories(payload),filters=cmsFilters(payload);
     if(categories.length===0){
       for(const params of [{ac:'list'} as Record<string,string|number|undefined>,{}]){
         try{
           const metadata=await this.#load(params,signal);
-          if(categories.length===0)categories=parseCmsCategories(metadata);
-          if(Object.keys(filters).length===0)filters=parseCmsFilters(metadata);
+          if(categories.length===0)categories=cmsCategories(metadata);
+          if(Object.keys(filters).length===0)filters=cmsFilters(metadata);
           if(categories.length>0)break;
         }catch{/* metadata endpoints vary; keep the valid home payload */}
       }
     }
-    return{items:parseCmsJson(payload),...(categories.length?{categories}:{}),...(Object.keys(filters).length?{filters}:{})};
+    return{items:cmsItems(payload),...(categories.length?{categories}:{}),...(Object.keys(filters).length?{filters}:{})};
   }
   async getCategory(categoryId:string,page:number,filters:Record<string,string>={},signal?:AbortSignal):Promise<CategoryResult>{
     const payload=await this.#load(categoryParams(categoryId,page,filters),signal);
-    const items=parseCmsJson(payload),pagination=jsonPagination(payload,page,items.length);
+    const items=cmsItems(payload);
+    const pagination='xml' in payload?xmlPagination(payload.xml,page,items.length):jsonPagination(payload.json,page,items.length);
     return{page,hasMore:pagination.hasMore,totalPages:pagination.totalPages,...(pagination.totalItems?{totalItems:pagination.totalItems}:{}),items};
   }
-  async search(keyword:string,page=1,signal?:AbortSignal):Promise<SearchResult>{return{page,items:parseCmsJson(await this.#load({ac:'detail',wd:keyword,pg:page},signal))};}
-  async getDetail(ids:string[],signal?:AbortSignal):Promise<DetailResult>{const item=jsonList(await this.#load({ac:'detail',ids:ids.join(',')},signal))[0];if(!item)throw new Error('CMS JSON detail returned no video');return jsonDetail(item);}
+  async search(keyword:string,page=1,signal?:AbortSignal):Promise<SearchResult>{return{page,items:cmsItems(await this.#load({ac:'detail',wd:keyword,pg:page},signal))};}
+  async getDetail(ids:string[],signal?:AbortSignal):Promise<DetailResult>{
+    return cmsDetail(await this.#load({ac:'detail',ids:ids.join(',')},signal),ids);
+  }
 }
 
 export class CmsXmlAdapter extends BaseAdapter{
@@ -76,5 +98,8 @@ export class CmsXmlAdapter extends BaseAdapter{
     return{page,hasMore:pagination.hasMore,totalPages:pagination.totalPages,...(pagination.totalItems?{totalItems:pagination.totalItems}:{}),items};
   }
   async search(keyword:string,page=1,signal?:AbortSignal):Promise<SearchResult>{return{page,items:parseCmsXml(await this.#load({ac:'videolist',wd:keyword,pg:page},signal))};}
-  async getDetail(ids:string[],signal?:AbortSignal):Promise<DetailResult>{const block=videoBlocks(await this.#load({ac:'videolist',ids:ids.join(',')},signal))[0];if(!block)throw new Error('CMS XML detail returned no video');return xmlDetail(block);}
+  async getDetail(ids:string[],signal?:AbortSignal):Promise<DetailResult>{
+    const xml=await this.#load({ac:'videolist',ids:ids.join(',')},signal);
+    return cmsDetail({xml},ids);
+  }
 }

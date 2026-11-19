@@ -123,7 +123,9 @@ await writeFile(fileB, makeWav(5));
 await writeFile(fileC, makeWav(7));
 
 const pipeName = `\\\\.\\pipe\\fnd-verify-${randomUUID()}`;
-const child = spawn(hostExe, ['--pipe', pipeName, '--parent-pid', String(process.pid), '--test-audio-output', 'null'], {
+const parentHwnd = process.env.FND_VERIFY_PARENT_HWND;
+if (parentHwnd && !/^\d+$/.test(parentHwnd)) throw new Error('Invalid test parent window handle');
+const child = spawn(hostExe, ['--pipe', pipeName, '--parent-pid', String(process.pid), ...(parentHwnd ? ['--parent-hwnd', parentHwnd] : []), '--test-audio-output', 'null'], {
   cwd: path.dirname(hostExe),
   stdio: 'ignore',
   windowsHide: true,
@@ -221,6 +223,29 @@ try {
       results.push({step:'real video produces two decoded PNG frame exports',ok:!captureA.error&&!captureB.error&&bytes.every(value=>value.length>8&&value.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))),detail:{frames,captureA,captureB}});
       const later=await client('player.query',{query:'stats'}),hashes=bytes.map(value=>createHash('sha256').update(value).digest('hex'));
       results.push({step:'video playback advances and exported frame files change (not a screen-presentation assertion)',ok:later.result?.position>first.result?.position+.2&&bytes.every(value=>value.length>8)&&hashes[0]!==hashes[1],detail:{positionBefore:first.result?.position,positionAfter:later.result?.position,hashes}});
+    }
+    if (parentHwnd) {
+      const command = (name, parameters) => client('player.command', {command:name, ...parameters});
+      const bounds = {x:20,y:20,width:320,height:180,scale:1};
+      const visibleEmbedded = surface => surface.mode==='embedded' && surface.windowVisible && surface.parentMatches && surface.withinParent && surface.width===320 && surface.height===180;
+      for (const [step, name, parameters, matches] of [
+        ['attach embedded video','window-sync',{...bounds,visible:true},visibleEmbedded],
+        ['enter fullscreen','fullscreen',{value:true},surface=>surface.mode==='fullscreen'&&surface.windowVisible&&!surface.parentMatches],
+        ['return from fullscreen','fullscreen',{value:false},visibleEmbedded],
+        ['enter picture in picture','pip',{value:true},surface=>surface.mode==='pip'&&surface.windowVisible&&!surface.parentMatches],
+        ['return from picture in picture','pip',{value:false},visibleEmbedded],
+        ['hide embedded video','window-sync',{...bounds,visible:false},surface=>surface.mode==='embedded'&&!surface.windowVisible&&!surface.requestedVisible],
+        ['restore embedded video','window-sync',{...bounds,visible:true},visibleEmbedded],
+      ]) {
+        const response=await command(name,parameters);
+        let surface;
+        for(let attempt=0;attempt<20;attempt++){
+          surface=(await client('player.query',{query:'stats'})).result?.videoSurface;
+          if(surface&&matches(surface))break;
+          await new Promise(resolve=>setTimeout(resolve,50));
+        }
+        results.push({step,ok:!response.error&&Boolean(surface&&matches(surface)),detail:{surface,error:response.error}});
+      }
     }
   }
   // Optional real-source probe: keep signed channel URLs out of the JSON report.

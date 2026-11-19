@@ -28,6 +28,22 @@ test('late music file lookup cannot hide or load over a newer VOD request',async
   const old=h.invoke('music:play',{trackId:'old-song'});await h.invoke('playback:play',{sourceId:'new-vod'});lookup.resolve();
   await assert.rejects(old,/PLAYBACK_SUPERSEDED/);assert.equal(h.commands.length,0);assert.equal(h.loads.length,0);assert.equal(h.controller.current().domain,'vod');
 });
+test('delayed VOD and live results are rejected after music takes ownership',async()=>{
+  const h=await harness(),vod=deferred(),live=deferred();
+  h.register('playback:play',()=>vod.promise);
+  h.register('live:play',()=>live.promise);
+  h.register('music:play',async()=>({ok:true}));
+  const vodResult=h.invoke('playback:play',{sourceId:'old-vod'});
+  const liveResult=h.invoke('live:play',{sourceId:'old-live',channelId:'test-channel'});
+  const musicResult=await h.invoke('music:play',{trackId:'latest-song'});
+  const rejectedVod=assert.rejects(vodResult,/PLAYBACK_SUPERSEDED/);
+  const rejectedLive=assert.rejects(liveResult,/PLAYBACK_SUPERSEDED/);
+  vod.resolve({ok:true});
+  live.resolve({ok:true,routeIndex:1,routeCount:2});
+  await Promise.all([rejectedVod,rejectedLive]);
+  assert.equal(h.controller.current().requestId,musicResult.session.requestId);
+  assert.equal(h.controller.current().trackId,'latest-song');
+});
 test('user intent between EOF consumption and auto-next commit wins atomically',async()=>{
   const h=await harness(c=>c.begin('live',{channelId:'new-user-channel'}));
   const parent=h.controller.begin('music',{trackId:'old-song'});h.controller.playing(parent.requestId,'parent-load');
@@ -61,4 +77,27 @@ test('automatic live retry must bind its current owning window and cannot create
   await assert.rejects(h.invoke('live:play',{initiator:'auto-route',requestId:session.requestId},1),/PLAYBACK_SUPERSEDED/);
   assert.equal(started,0);await h.invoke('live:play',{initiator:'auto-route',requestId:session.requestId},2);assert.equal(started,1);assert.equal(h.controller.current().generation,session.generation);
   assert.throws(()=>h.invoke('playback:beginIntent',{domain:'music',initiator:'auto-next'},2),/PLAYBACK_SUPERSEDED/);assert.equal(h.controller.current().requestId,session.requestId);
+});
+
+test('coordinated live loads keep their request mutable until the owning window reports final failure',async()=>{
+  const h=await harness();
+  const contexts=[];
+  h.player.load=async(_request,_accepted,context)=>{
+    contexts.push(context);
+    if(!context.deferLiveFailure)h.controller.fail(context.requestId,'route failed');
+    throw Error('route failed');
+  };
+  h.register('live:play',()=>h.player.load({url:'route',profile:'live'}));
+  const request=h.invoke('playback:beginIntent',{domain:'live',sourceId:'source',channelId:'channel'},2);
+  for(const initiator of ['user','auto-route']){
+    await assert.rejects(h.invoke('live:play',{requestId:request.requestId,initiator},2),/route failed/);
+    assert.equal(h.controller.isMutable(request.requestId),true);
+  }
+  assert.equal(contexts.length,2);
+  assert.ok(contexts.every(context=>context.deferLiveFailure===true));
+  const failure={requestId:request.requestId,error:'three attempts failed'};
+  assert.equal(h.invoke('playback:failIntent',failure,1),false);
+  assert.equal(h.invoke('playback:failIntent',failure,2),true);
+  assert.equal(h.controller.current().error,failure.error);
+  assert.equal(h.controller.current().status,'failed');
 });

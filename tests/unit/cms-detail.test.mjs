@@ -11,6 +11,33 @@ async function withServer(handler,run){
   try{return await run(`http://127.0.0.1:${address.port}/api`);}finally{await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 }
 
+test('CMS detail selects a requested title when the source returns unrelated rows first',async()=>{
+  const records=[{id:'wrong',name:'Wrong title'},{id:'right',name:'Requested title'}];
+  await withServer((request,response)=>{
+    const type=new URL(request.url,'http://fixture').searchParams.get('type');
+    if(type==='json'){
+      response.setHeader('content-type','application/json');
+      response.end(JSON.stringify({list:records.map(({id,name})=>({vod_id:id,vod_name:name}))}));
+      return;
+    }
+    response.setHeader('content-type','application/xml');
+    response.end('<rss><list>'+records.map(({id,name})=>`<video><id>${id}</id><name>${name}</name></video>`).join('')+'</list></rss>');
+  },async endpoint=>{
+    const adapters=[
+      new CmsJsonAdapter(endpoint+'?type=json'),
+      new CmsJsonAdapter(endpoint+'?type=xml'),
+      new CmsXmlAdapter(endpoint+'?type=xml'),
+    ];
+    for(const adapter of adapters){
+      await adapter.init({sourceId:'detail-identity'});
+      try{
+        assert.equal((await adapter.getDetail(['right'])).name,'Requested title');
+        await assert.rejects(adapter.getDetail(['missing']),/未返回指定影片/);
+      }finally{await adapter.destroy();}
+    }
+  });
+});
+
 test('CMS JSON adapter falls back for categories, sends native filters and infers pagination',async()=>{
   let categoryQuery;
   const metadataCalls=[];
@@ -63,6 +90,35 @@ test('CMS JSON adapter keeps next-page discovery when an API omits pagination me
     assert.equal(page.hasMore,true);
     assert.equal(page.totalPages,2);
     await adapter.destroy();
+  });
+});
+
+test('CMS sources labelled JSON accept RSS XML bodies and still reject HTML',async()=>{
+  const video='<video><id>x1</id><name>XML Movie</name><dl><dd flag="Main"><![CDATA[EP1$https://media.example/xml.m3u8]]></dd></dl></video>';
+  const payload=`<?xml version="1.0"?><rss><list pagecount="3" recordcount="42" pagesize="20">${video}</list></rss>`;
+  await withServer((request,response)=>{
+    const params=new URL(request.url??'/', 'http://fixture').searchParams;
+    response.setHeader('content-type','application/json');
+    if(params.get('wd')==='blocked')response.end('<!DOCTYPE html><html>Forbidden</html>');
+    else if(params.get('ac')==='list')response.end('<rss><class><ty id="2">电影</ty></class></rss>');
+    else response.end(payload);
+  },async endpoint=>{
+    const adapter=new CmsJsonAdapter(endpoint);
+    await adapter.init({sourceId:'json-labelled-rss'});
+    try{
+      const home=await adapter.getHome();
+      assert.equal(home.items[0]?.name,'XML Movie');
+      assert.deepEqual(home.categories,[{id:'2',name:'电影'}]);
+      const category=await adapter.getCategory('2',1);
+      assert.equal(category.items[0]?.id,'x1');
+      assert.equal(category.totalPages,3);
+      assert.equal(category.totalItems,42);
+      assert.equal((await adapter.search('XML Movie')).items[0]?.id,'x1');
+      const episode=(await adapter.getDetail(['x1'])).episodes[0];
+      assert.equal(episode.name,'EP1');
+      assert.deepEqual(await adapter.getPlay(episode.flag,episode.id),{url:'https://media.example/xml.m3u8',parse:false});
+      await assert.rejects(adapter.search('blocked'),SyntaxError);
+    }finally{await adapter.destroy();}
   });
 });
 

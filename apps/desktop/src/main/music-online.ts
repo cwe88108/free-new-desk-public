@@ -5,7 +5,7 @@ import type { MusicTrack } from '@free-new-desk/contracts';
 import {musicTrackDuration} from '@free-new-desk/contracts';
 type Identity=Pick<MusicTrack,'title'|'artist'|'album'|'duration'|'cueStart'|'cueEnd'>;
 const MAX_BYTES=8*1024*1024,TTL=30*86400000;
-const UA='Free-New-Desk-Public/1.5.0 (+https://github.com/cwe88108/free-new-desk-public)';
+const UA='Free-New-Desk-Public/1.5.2 (+https://github.com/cwe88108/free-new-desk-public)';
 const gates=new Map<string,Promise<unknown>>(),lastCall=new Map<string,number>();
 const pending=new Map<string,Promise<unknown>>();
 export function sanitizeMusicMetadata(value:string):string{

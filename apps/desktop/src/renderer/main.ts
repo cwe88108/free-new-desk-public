@@ -15,8 +15,57 @@ function applyTheme(theme:string):void{
 }
 systemDark.addEventListener('change',()=>{if(document.documentElement.dataset.themePreference==='system')applyTheme('system');});
 
+const smokeFrameGaps:number[]=[];
+let smokeFrameSampling=false,smokeFrameHandle=0,smokeFrameLast=0;
+function sampleSmokeFrame(now:number):void{
+  if(!smokeFrameSampling)return;
+  if(smokeFrameLast>0){
+    const gap=now-smokeFrameLast;
+    if(Number.isFinite(gap)&&gap>0&&gap<=1000){
+      smokeFrameGaps.push(gap);
+      if(smokeFrameGaps.length>6000)smokeFrameGaps.shift();
+    }
+  }
+  smokeFrameLast=now;
+  smokeFrameHandle=requestAnimationFrame(sampleSmokeFrame);
+}
+function smokePercentile(values:number[],ratio:number):number{
+  if(!values.length)return 0;
+  const ordered=[...values].sort((a,b)=>a-b);
+  return ordered[Math.min(ordered.length-1,Math.max(0,Math.ceil(ordered.length*ratio)-1))]??0;
+}
+function startSmokeFrameSampling():void{
+  if(smokeFrameSampling)return;
+  smokeFrameSampling=true;smokeFrameLast=0;smokeFrameGaps.length=0;
+  smokeFrameHandle=requestAnimationFrame(sampleSmokeFrame);
+}
+async function stopSmokeFrameSampling():Promise<void>{
+  if(!smokeFrameSampling)return;
+  smokeFrameSampling=false;cancelAnimationFrame(smokeFrameHandle);
+  const values=[...smokeFrameGaps],over16=values.filter(value=>value>16.7).length,over33=values.filter(value=>value>33.3).length,over50=values.filter(value=>value>50).length;
+  if(!values.length)return;
+  const metrics:Array<[string,number]>=[
+    ['rendererFrameSampleCount',values.length],
+    ['rendererFrameP50Ms',smokePercentile(values,.5)],
+    ['rendererFrameP95Ms',smokePercentile(values,.95)],
+    ['rendererFrameMaxMs',Math.max(...values)],
+    ['rendererFrameOver16MsCount',over16],
+    ['rendererFrameOver33MsCount',over33],
+    ['rendererFrameOver50MsCount',over50],
+    ['rendererFrameOver16MsRate',over16/values.length],
+    ['rendererFrameOver33MsRate',over33/values.length],
+    ['rendererFrameOver50MsRate',over50/values.length]
+  ];
+  for(const[metric,value]of metrics)await window.desktop.diagnostics.recordPerformance(metric,value).catch(()=>false);
+}
+async function flushSmokeSurfaceTiming():Promise<unknown>{
+  await stopSmokeFrameSampling();
+  return await Promise.race([window.desktop.diagnostics.recordPerformance('surfaceTraceFlush',0).catch(()=>false),new Promise(resolve=>setTimeout(resolve,2000))]);
+}
+
 function renderFatal(reason:unknown):void{
   const message=reason instanceof Error?reason.message:String(reason);
+  if(window.desktop?.app?.isUiSmoke?.())void flushSmokeSurfaceTiming();
   const smokeDetail=message.replace(/[\r\n:]+/g,' ').slice(0,120);
   document.title=window.desktop?.app?.isUiSmoke?.()?`Free New Desk - Renderer Error ${smokeDetail}`:'Free New Desk - Renderer Error';
   const root=document.getElementById('app');
@@ -51,6 +100,7 @@ function assertAccessibleFocusTargets(page:string):void{
 }
 
 async function runUiSmoke():Promise<void>{
+  startSmokeFrameSampling();
   const pages=['home','vod','live','music','player','search','favorites','history','sources','settings','live','music','player','search','player'] as const;
   await sleep(800);
   for(const key of pages){
@@ -67,7 +117,7 @@ async function runUiSmoke():Promise<void>{
     const content=document.querySelector<HTMLElement>('.content');
     if(!content||content.innerText.trim().length<2)throw new Error(`UI smoke route rendered empty content: ${key}`);
     assertAccessibleFocusTargets(key);
-    if(key==='sources'){const labels=[...document.querySelectorAll<HTMLButtonElement>('.bulk-toolbar button')].map(button=>button.textContent?.trim());for(const required of ['全部启动','全部停用','启用兼容来源','停止不兼容来源'])if(!labels.includes(required))throw new Error('Sources bulk control missing: '+required);}
+    if(key==='sources'){const labels=[...document.querySelectorAll<HTMLButtonElement>('.bulk-toolbar button')].map(button=>button.textContent?.trim());for(const required of ['全部启动','全部停用','启用检查通过来源','停止检查失败来源'])if(!labels.includes(required))throw new Error('Sources bulk control missing: '+required);}
     if(key==='settings'){
       const javaCard=document.querySelector<HTMLElement>('.java-runtime-card');
       if(!javaCard)throw new Error('Settings UI smoke is missing the Java Runtime card.');
@@ -78,6 +128,7 @@ async function runUiSmoke():Promise<void>{
     document.title=`Free New Desk - Smoke:${key}`;
     await sleep(1600);
   }
+  await flushSmokeSurfaceTiming();
   document.title='Free New Desk - UI Smoke Complete';
 }
 

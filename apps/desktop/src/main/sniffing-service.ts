@@ -1,8 +1,11 @@
 import { BrowserWindow } from 'electron';
+import type {OnHeadersReceivedListenerDetails} from 'electron';
 import { createHash,randomUUID } from 'node:crypto';
 
 const MEDIA_URL=/\.(?:m3u8|mp4|m4v|flv|mpd|ts|mkv|webm|aac|m4a)(?:[?#]|$)/i;
-const MEDIA_TYPE=/(?:^|\s)(?:video\/|audio\/|application\/(?:vnd\.apple\.mpegurl|x-mpegurl|dash\+xml|octet-stream))/i;
+const MEDIA_TYPE=/(?:^|\s)(?:video\/|audio\/|application\/(?:vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i;
+const GENERIC_BINARY_TYPE=/^application\/octet-stream(?:\s*;|$)/i;
+const PAGE_ASSET_TYPES=new Set(['image','font','script','stylesheet','ping']);
 const NON_MEDIA_TYPE=/(?:^|\s)(?:text\/html|application\/(?:json|problem\+json)|text\/json)/i;
 const KEEP_HEADERS=new Set(['user-agent','referer','origin','cookie']);
 const REQUEST_FILTER={urls:['http://*/*','https://*/*']};
@@ -21,9 +24,10 @@ function headerValue(headers:Record<string,string[]|string>|undefined,name:strin
   return Array.isArray(entry[1])?entry[1].join(';'):entry[1];
 }
 
-function isPlayableResponse(url:string,statusCode:number,responseHeaders:Record<string,string[]|string>|undefined):boolean{
+function isPlayableResponse({url,statusCode,responseHeaders,resourceType}:OnHeadersReceivedListenerDetails):boolean{
   const contentType=headerValue(responseHeaders,'content-type'),success=statusCode>=200&&statusCode<300;
   if(!success||NON_MEDIA_TYPE.test(contentType))return false;
+  if(GENERIC_BINARY_TYPE.test(contentType.trim()))return !PAGE_ASSET_TYPES.has(resourceType);
   return MEDIA_TYPE.test(contentType)||MEDIA_URL.test(url);
 }
 
@@ -57,12 +61,15 @@ export class SniffingService {
         callback({requestHeaders:details.requestHeaders});
       });
       session.webRequest.onHeadersReceived(REQUEST_FILTER,(details,callback)=>{
-        if(!settled&&isPlayableResponse(details.url,details.statusCode,details.responseHeaders as Record<string,string[]|string>|undefined)){
-          const captured=capturedHeaders.get(details.id)??{};
-          finish(null,{url:details.url,...(Object.keys(captured).length?{headers:captured}:{})});
-        }
+        const captured=capturedHeaders.get(details.id)??{};
         capturedHeaders.delete(details.id);
         callback(details.responseHeaders?{responseHeaders:details.responseHeaders}:{});
+        if(settled)return;
+        if(details.resourceType==='mainFrame'&&details.statusCode>=400){
+          finish(new Error(`[PLAY_PARSER_FAILED] 播放页面返回 HTTP ${details.statusCode}`));
+        }else if(isPlayableResponse(details)){
+          finish(null,{url:details.url,...(Object.keys(captured).length?{headers:captured}:{})});
+        }
       });
       window.webContents.once('did-fail-load',(_event,code,description)=>{if(!settled&&code!==-3)finish(new Error(`[PLAY_PARSER_FAILED] Sniff page failed: ${description}`));});
       const extraHeaders=Object.entries(headers).map(([key,value])=>`${key}: ${value}`).join('\n');

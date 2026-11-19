@@ -5,9 +5,11 @@ import {readFile,writeFile,readdir,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {rootCertificates} from 'node:tls';
 import {prepareBuilderTools} from './prepare-builder-tools.mjs';
 
 const digest=(bytes,algorithm='sha256')=>createHash(algorithm).update(bytes).digest(algorithm==='sha512'?'base64':'hex');
+const playerTrustBundle=rootCertificates.join('\n')+'\n';
 const require=createRequire(import.meta.url);
 const yaml=require('js-yaml');
 async function fileHash(file){const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);return hash.digest('hex');}
@@ -92,7 +94,7 @@ export async function sourceProvenance(root){
   return{schemaVersion:1,version:pkg.version,
     buildTools:{electronBuilder:pkg.devDependencies['electron-builder'],sevenZip:buildTools.sevenZip.version,nsis:buildTools.nsis.version,nsisToolset:buildTools.nsis.toolset,sevenZipWinSha256:buildTools.sevenZip.platforms['win32-x64'].executableSha256,nsisBundleSha256:buildTools.nsis.archiveSha256},
     source:{commit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),dirty:Boolean(execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim()),treeSha256:tree.digest('hex'),lockSha256:digest(await readFile(path.join(root,'package-lock.json')))},
-    runtimes:{buildNode:process.version,electron:pkg.devDependencies.electron,mpvCommit:/^mpv commit:\s*(.+)$/m.exec(mpvSource)?.[1]?.trim(),mpvDllSha256:await fileHash(path.join(root,'third_party/mpv/win-x64/libmpv-2.dll')),java:(java.stderr||java.stdout).trim().split(/\r?\n/)[0]},
+    runtimes:{buildNode:process.version,electron:pkg.devDependencies.electron,mpvCommit:/^mpv commit:\s*(.+)$/m.exec(mpvSource)?.[1]?.trim(),mpvDllSha256:await fileHash(path.join(root,'third_party/mpv/win-x64/libmpv-2.dll')),playerTrustBundleSha256:digest(playerTrustBundle),java:(java.stderr||java.stdout).trim().split(/\r?\n/)[0]},
     nativeBuild:{playerHostSha256:await fileHash(path.join(root,'native/player-host/build/Release/player-host.exe')),smbHelperSha256:await fileHash(path.join(root,'native/player-host/build/Release/smb-helper.exe')),playerHostImageSha256:executableImageHash(await readFile(path.join(root,'native/player-host/build/Release/player-host.exe'))),smbHelperImageSha256:executableImageHash(await readFile(path.join(root,'native/player-host/build/Release/smb-helper.exe')))}};
 }
 export async function prepareReleaseProvenance(root){
@@ -101,6 +103,7 @@ export async function prepareReleaseProvenance(root){
   const provenance=await sourceProvenance(root);
   const target=path.join(root,'dist','build-provenance.json');
   await mkdir(path.dirname(target),{recursive:true});
+  await writeFile(path.join(root,'dist','player-public-roots.pem'),playerTrustBundle,'utf8');
   await writeFile(target,JSON.stringify(provenance,null,2)+'\n','utf8');
   console.log(`Prepared build provenance before packaging: ${target}`);
   return provenance;
@@ -127,7 +130,7 @@ export async function writeReleaseManifest(root,requireSignature=false){
   catch(error){throw new Error('Missing or malformed embedded build-provenance.json; generate provenance BEFORE electron-builder packs app.asar',{cause:error});}
   if(JSON.stringify(embedded)!==JSON.stringify(provenance))throw new Error('Packaged provenance differs from the current source/runtime; rebuild before producing a release manifest');
   const nativeDir=path.join(releaseDir,'win-unpacked/resources/native/player-host'),nativeFiles=[];
-  for(const[name,expected]of [['player-host.exe',provenance.nativeBuild.playerHostImageSha256],['smb-helper.exe',provenance.nativeBuild.smbHelperImageSha256],['libmpv-2.dll',provenance.runtimes.mpvDllSha256]]){
+  for(const[name,expected]of [['player-host.exe',provenance.nativeBuild.playerHostImageSha256],['smb-helper.exe',provenance.nativeBuild.smbHelperImageSha256],['libmpv-2.dll',provenance.runtimes.mpvDllSha256],['player-public-roots.pem',provenance.runtimes.playerTrustBundleSha256]]){
     const file=path.join(nativeDir,name),bytes=await readFile(file),imageSha256=name.endsWith('.exe')?executableImageHash(bytes):digest(bytes);
     if(imageSha256!==expected)throw new Error(`Packaged native file differs from the current build: ${name}`);
     const authenticode=name.endsWith('.exe')&&process.platform==='win32'?signature(file):undefined;

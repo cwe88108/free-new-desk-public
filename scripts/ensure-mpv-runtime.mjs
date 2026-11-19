@@ -14,6 +14,8 @@ const sourceFile=path.join(runtimeDir,'SOURCE.txt');
 const target=path.join(runtimeDir,'libmpv-2.dll');
 const sourceText=await readFile(sourceFile,'utf8');
 const field=name=>sourceText.match(new RegExp(`^${name}:\\s*(.+)$`,'mi'))?.[1]?.trim();
+const vendoredName=field('vendored archive');
+if(vendoredName&&!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.7z$/.test(vendoredName))throw new Error('Invalid vendored archive filename');
 const source=field('source'),archiveSha=field('archive sha256')?.toLowerCase(),dllSha=field('dll sha256')?.toLowerCase();
 if(!source||!/^https:\/\//i.test(source)||!/^[a-f0-9]{64}$/.test(archiveSha??'')||!/^[a-f0-9]{64}$/.test(dllSha??''))throw new Error('SOURCE.txt must declare HTTPS source, archive sha256 and dll sha256');
 const hash=async file=>createHash('sha256').update(await readFile(file)).digest('hex');
@@ -30,7 +32,11 @@ const work=await mkdtemp(path.join(tmpdir(),'free-new-desk-mpv-'));
 const archive=path.join(work,'mpv-runtime.7z');
 const cacheDir=path.join(root,'third_party','mpv','cache'),cachedArchive=path.join(cacheDir,`${archiveSha}.7z`);
 try{
-  if(await exists(cachedArchive))await copyFile(cachedArchive,archive);
+  if(vendoredName){
+    // The provider retains rolling builds for only 30 days. A pinned checkout
+    // must remain buildable without the network or an Actions cache.
+    await copyFile(path.join(root,'third_party','mpv','vendor',vendoredName),archive);
+  }else if(await exists(cachedArchive))await copyFile(cachedArchive,archive);
   else{
     console.log(`Downloading pinned mpv runtime: ${source}`);
     const response=await fetch(source,{redirect:'follow',signal:AbortSignal.timeout(120_000)});

@@ -12,6 +12,7 @@ async function bootstrap(lock,{failAt,activateDuring,customProfile=false}={}){
   const app={commandLine:{hasSwitch:()=>customProfile},getPath:()=>'/test-appdata',setPath:(key,value)=>{profiles.push(value);assert.equal(key,'userData');assert.equal(value,join('/test-appdata','free-new-desk-public'));assert.equal(events.length,0);},requestSingleInstanceLock:()=>{events.push('lock');return lock;},quit:()=>events.push('quit'),exit:code=>events.push('exit:'+code),on:(event,handler)=>handlers.set(event,handler)};
   const context={exports:{},console:{error:()=>events.push('error')},require:name=>{
     if(name==='node:path')return{join};
+    if(name==='./distribution.js')return{profileDirectory:'free-new-desk-public'};
     if(name==='electron')return{app,protocol:{registerSchemesAsPrivileged:()=>events.push('protocol')}};
     events.push(name);if(name===activateDuring)handlers.get('second-instance')();if(name===failAt)throw new Error('fixture import failure');
     return name==='./index.js'?{showMainWindow:()=>events.push('activate')}:{};

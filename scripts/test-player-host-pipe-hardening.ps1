@@ -26,6 +26,12 @@ public static class PlayerPipeSecurityCheck {
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool RevertToSelf();
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetNamedPipeServerProcessId(IntPtr pipe,out uint processId);
+  public static uint ServerProcessId(IntPtr pipe) {
+    uint processId;
+    if(!GetNamedPipeServerProcessId(pipe,out processId))throw new Win32Exception();
+    return processId;
+  }
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr h);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateFile(string name,uint access,uint sharing,IntPtr security,uint creation,uint flags,IntPtr template);
   public static string Dacl(IntPtr handle) {
@@ -110,8 +116,25 @@ function Assert-Disconnected($Client) {
   }
 }
 
+function Assert-OriginalPipeOwner {
+  if ($process.HasExited) { throw "Original PlayerHost exited: $($process.ExitCode)" }
+  $client = New-TestClient
+  try {
+    $ownerId = [PlayerPipeSecurityCheck]::ServerProcessId($client.SafePipeHandle.DangerousGetHandle())
+    if ($ownerId -ne $process.Id) { throw "Pipe owner changed: expected $($process.Id), got $ownerId" }
+    Write-Frame $client ('{"id":"owner-check","method":"player.ping"}' + "`n")
+    $reply = Read-Line $client | ConvertFrom-Json
+    if ($reply.id -ne 'owner-check' -or -not $reply.result.ok) { throw 'Original pipe owner stopped responding.' }
+    return $ownerId
+  } finally { $client.Dispose() }
+}
+
 try {
-  Copy-Item -LiteralPath (Join-Path $root 'third_party/mpv/win-x64/libmpv-2.dll') -Destination (Join-Path (Split-Path $Executable) 'libmpv-2.dll') -Force
+  $sourceDll = Join-Path $root 'third_party/mpv/win-x64/libmpv-2.dll'
+  $targetDll = Join-Path (Split-Path $Executable) 'libmpv-2.dll'
+  if (Test-Path -LiteralPath $targetDll) {
+    if ((Get-FileHash -LiteralPath $sourceDll -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $targetDll -Algorithm SHA256).Hash) { throw 'Native test DLL differs from the prepared runtime; prepare the runtime before testing.' }
+  } else { Copy-Item -LiteralPath $sourceDll -Destination $targetDll }
   $process = Start-Process -FilePath $Executable -ArgumentList @('--pipe', $pipe, '--test-audio-output', 'null') -PassThru -WindowStyle Hidden
   $ping = Invoke-TestRequest @{ id='hardening-ready'; method='player.ping'; params=@{} }
   if (-not $ping.result.ok) { throw 'Test PlayerHost did not initialize.' }
@@ -128,12 +151,41 @@ try {
   if ($denied -ne 5) { throw "Restricted token pipe access was not denied: $denied" }
   $checks.Add(@{ name='restricted identity rejected'; passed=$true; win32Error=$denied })
   $remoteDenied = [PlayerPipeSecurityCheck]::RemoteOpenError(('\\127.0.0.1\pipe\' + $name))
-  if ($remoteDenied -ne 5) { throw "Remote loopback pipe access was not denied with ERROR_ACCESS_DENIED: $remoteDenied" }
-  $checks.Add(@{ name='remote loopback rejected'; passed=$true; win32Error=$remoteDenied })
+  $checks.Add(@{ name='remote loopback rejected'; passed=($remoteDenied -eq 5); win32Error=$remoteDenied; expectedWin32Error=5 })
+  if ($remoteDenied -ne 5) { Write-Warning "Remote loopback check did not return ERROR_ACCESS_DENIED: $remoteDenied. The overall test remains failed; continuing independent checks." }
 
-  $collision = Start-Process -FilePath $Executable -ArgumentList @('--pipe', $pipe, '--test-audio-output', 'null') -PassThru -WindowStyle Hidden
-  if (-not $collision.WaitForExit(10000) -or $collision.ExitCode -ne 2) { throw 'Duplicate server did not fail closed.' }
-  $checks.Add(@{ name='duplicate server rejected'; passed=$true; exitCode=$collision.ExitCode })
+  # Own the process handle directly, including when the duplicate exits immediately.
+  # Do not retry failures or relax the 10 second deadline / exact exit-code assertion.
+  $duplicateAttempts = @()
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
+    $ownerBefore = Assert-OriginalPipeOwner
+    $startInfo = [Diagnostics.ProcessStartInfo]::new((Resolve-Path $Executable).Path)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @('--pipe', $pipe, '--test-audio-output', 'null')) { $startInfo.ArgumentList.Add($argument) }
+    $collisionWatch = [Diagnostics.Stopwatch]::StartNew()
+    $collision = [Diagnostics.Process]::Start($startInfo)
+    $stderrRead = $collision.StandardError.ReadToEndAsync()
+    $exited = $collision.WaitForExit(10000)
+    $collisionWatch.Stop()
+    $exitCode = if ($exited) { $collision.ExitCode } else { $null }
+    try {
+      if ($exited -and -not $stderrRead.IsCompleted) { [void]$stderrRead.Wait(1000) }
+      $stderr = if ($stderrRead.IsCompleted) { $stderrRead.GetAwaiter().GetResult() } else { '<stderr still open>' }
+    } catch { $stderr = '<stderr unavailable: ' + $_.Exception.Message + '>' }
+    $observation = @{ attempt=$attempt; processId=$collision.Id; exited=$exited; exitCode=$exitCode; elapsedMs=$collisionWatch.ElapsedMilliseconds; originalProcessId=$ownerBefore; stderr=$stderr }
+    # Write immediately, so evidence survives a failing assertion or later test.
+    Write-Host ('Duplicate server observation: ' + ($observation | ConvertTo-Json -Compress))
+    if (-not $exited) { throw "Duplicate server did not fail closed: attempt $attempt timed out after 10000 ms. stderr: $stderr" }
+    if ($exitCode -ne 2) { throw "Duplicate server did not fail closed: attempt $attempt exited with $exitCode, expected 2. stderr: $stderr" }
+    $observation.ownerAfter = Assert-OriginalPipeOwner
+    Write-Host ('Duplicate server verified: ' + ($observation | ConvertTo-Json -Compress))
+    $duplicateAttempts += $observation
+    $collision.Dispose()
+    $collision = $null
+  }
+  $checks.Add(@{ name='duplicate server rejected'; passed=$true; exitCode=2; attempts=$duplicateAttempts })
 
   for ($i=0; $i -lt 4; $i++) { $clients.Add((New-TestClient)) }
   $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -225,10 +277,12 @@ try {
   $final = Invoke-TestRequest @{ id='hardening-final'; method='player.ping'; params=@{} }
   if (-not $final.result.ok) { throw 'Host did not remain responsive.' }
 
-  $evidence = @{ checkedAt=[DateTime]::UtcNow.ToString('o'); executable=(Resolve-Path $Executable).Path; executableSha256=(Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash; processId=$process.Id; checks=$checks.ToArray(); passed=$true }
+  $allPassed = @($checks | Where-Object { -not $_.passed }).Count -eq 0
+  $evidence = @{ checkedAt=[DateTime]::UtcNow.ToString('o'); executable=(Resolve-Path $Executable).Path; executableSha256=(Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash; processId=$process.Id; checks=$checks.ToArray(); passed=$allPassed }
   $json = $evidence | ConvertTo-Json -Depth 8
   if ($EvidencePath) { $json | Set-Content -LiteralPath $EvidencePath -Encoding utf8 }
   Write-Output $json
+  if (-not $allPassed) { throw 'One or more native pipe checks did not pass; see the individual evidence results.' }
 } finally {
   foreach ($client in $clients) { $client.Dispose() }
   foreach ($testProcess in @($collision, $process)) { if ($testProcess -and -not $testProcess.HasExited) { Stop-Process -Id $testProcess.Id -Force } }

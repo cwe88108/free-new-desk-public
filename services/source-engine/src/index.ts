@@ -1,6 +1,8 @@
+import {visibleSourceCategories} from '@free-new-desk/contracts';
 import type {CategoryResult,DetailResult,HomeResult,PlaybackDescriptorV2,PlayResult,SearchResult,SourceAdapter,SourceAuditResult,SourceConfig,SourceContext,SourceSummary} from '@free-new-desk/contracts';
 import {AlistAdapter,CmsJsonAdapter,CmsXmlAdapter,DeclarativeRuleAdapter,Type4Adapter} from '@free-new-desk/source-adapters';
 import {RequestBroker} from '@free-new-desk/source-sdk';
+import {PythonSpiderAdapter} from './python-spider-adapter.js';
 import {JavaSpiderAdapter} from './java-spider-adapter.js';
 import {PluginAdapter} from './plugin-adapter.js';
 import {SpiderAdapter} from './spider-adapter.js';
@@ -13,7 +15,7 @@ import {prepareExecutableReview} from './executable-trust.js';
 
 const MAX_EXECUTABLE=6,IDLE_MS=180_000;
 const runtimeProbeBroker=new RequestBroker();
-function executable(config:SourceConfig):boolean{return config.kind==='T3_JS'||config.kind==='T3_JAR'||config.kind==='PLUGIN'||config.kind==='T4_CATVOD';}
+function executable(config:SourceConfig):boolean{return config.kind==='T3_JS'||config.kind==='T3_PY'||config.kind==='T3_JAR'||config.kind==='PLUGIN'||config.kind==='T4_CATVOD';}
 function isDoubanSource(config:SourceConfig):boolean{return /豆瓣|douban/i.test(`${config.id} ${config.name}`);}
 function runtimeProxyResult(result:PlaybackDescriptorV2):boolean{return result.resolutionIntent==='runtime-proxy'||result.candidates.some(candidate=>candidate.target.kind==='runtime-proxy'||candidate.target.kind==='external-bridge');}
 
@@ -26,7 +28,7 @@ async function useDrpy2(config:SourceConfig,signal?:AbortSignal):Promise<boolean
 }
 export class SourceEngine{
   readonly #configs=new Map<string,SourceConfig>();readonly #failures=new Map<string,string>();readonly #notices=new Map<string,string>();readonly #auditPending=new Map<string,Promise<SourceAuditResult>>();
-  readonly #runtime=new RuntimeManager({maxExecutable:MAX_EXECUTABLE,idleMs:IDLE_MS,isExecutable:executable,create:config=>this.#initializeAdapter(config)});
+  readonly #runtime=new RuntimeManager({maxExecutable:MAX_EXECUTABLE,idleMs:IDLE_MS,isExecutable:executable,create:(config,signal)=>this.#initializeAdapter(config,signal)});
   #proxyBaseUrl='';#proxyToken='';#engineStoreDir='';#executableTrustStoreDir='';
   configureRuntime(config:{proxyBaseUrl?:string;proxyToken?:string;engineStoreDir?:string;executableTrustStoreDir?:string}):void{this.#proxyBaseUrl=config.proxyBaseUrl??'';this.#proxyToken=config.proxyToken??'';this.#engineStoreDir=config.engineStoreDir??'';this.#executableTrustStoreDir=config.executableTrustStoreDir??'';}
   prepareExecutable(config:SourceConfig){return prepareExecutableReview(config);}
@@ -41,20 +43,20 @@ export class SourceEngine{
     case'T1_JSON':return new CmsJsonAdapter(config.endpoint);case'T0_XML':return new CmsXmlAdapter(config.endpoint);
     case'T4_EXT':return new Type4Adapter(config.endpoint,config.ext,config.type4Dialect,config.configRevision??'legacy');
     case'T3_XYQ':case'T3_XBPQ':return new DeclarativeRuleAdapter(config.endpoint,config.ext);case'DRIVE_ALIST':return new AlistAdapter(config.endpoint);
-    case'T3_JS':return await useDrpy2(config,signal)?new Drpy2Adapter(config):new SpiderAdapter(config);case'T3_JAR':return new JavaSpiderAdapter(config);case'PLUGIN':return new PluginAdapter(config);
+    case'T3_JS':return await useDrpy2(config,signal)?new Drpy2Adapter(config):new SpiderAdapter(config);case'T3_PY':return new PythonSpiderAdapter(config);case'T3_JAR':return new JavaSpiderAdapter(config);case'PLUGIN':return new PluginAdapter(config);
     case'T4_CATVOD':if(!/\.js(?:\?|$)/i.test(config.ext??config.endpoint))return new Type4Adapter(config.endpoint,config.ext,config.type4Dialect,config.configRevision??'legacy');return await useDrpy2(config,signal)?new Drpy2Adapter(config):new SpiderAdapter(config);default:return undefined;
   }}
-  async #initializeAdapter(config:SourceConfig):Promise<SourceAdapter>{
-    const adapter=await this.#createAdapter(config);if(!adapter)throw new Error(`Unsupported source kind: ${config.kind}`);
+  async #initializeAdapter(config:SourceConfig,signal:AbortSignal):Promise<SourceAdapter>{
+    signal.throwIfAborted();const adapter=await this.#createAdapter(config,signal);if(!adapter)throw new Error(`Unsupported source kind: ${config.kind}`);
     const context:SourceContext={sourceId:config.id,configRevision:config.configRevision??'legacy',accountProfile:'default',executableTrustStoreDir:this.#executableTrustStoreDir,...(this.#proxyBaseUrl?{proxyBaseUrl:this.#proxyBaseUrl}:{}),...(this.#proxyToken?{proxyToken:this.#proxyToken}:{}),...(this.#engineStoreDir?{engineStoreDir:this.#engineStoreDir}:{}),...(config.headers?{requestHeaders:config.headers}:{})};
-    try{await adapter.init(context);this.#failures.delete(config.id);this.#notices.delete(config.id);return adapter;}
+    try{signal.throwIfAborted();await adapter.init(context,signal);signal.throwIfAborted();this.#failures.delete(config.id);this.#notices.delete(config.id);return adapter;}
     catch(error){
       const message=error instanceof Error?error.message:String(error);
-      if(config.kind==='T3_JAR'&&/ClassNotFoundException/i.test(message)&&isDoubanSource(config)){
-        await adapter.destroy().catch(()=>undefined);const fallback=new DoubanAdapter(config);await fallback.init(context);this.#failures.delete(config.id);
+      if(!signal.aborted&&config.kind==='T3_JAR'&&/ClassNotFoundException/i.test(message)&&isDoubanSource(config)){
+        await adapter.destroy().catch(()=>undefined);const fallback:SourceAdapter=new DoubanAdapter(config);await fallback.init(context,signal);this.#failures.delete(config.id);
         this.#notices.set(config.id,`配置引用的 Spider 类不在 JAR 中，已自动回退到内置豆瓣源（浏览/搜索/详情/官方预告片播放）。原始错误：${message}`);return fallback;
       }
-      await adapter.destroy().catch(()=>undefined);this.#failures.set(config.id,message);throw error;
+      await adapter.destroy().catch(()=>undefined);if(!signal.aborted)this.#failures.set(config.id,message);throw error;
     }
   }
   #config(sourceId:string):SourceConfig{const config=this.#configs.get(sourceId);if(!config)throw new Error(this.#failures.get(sourceId)??'Source is disabled or missing');return config;}
@@ -66,7 +68,7 @@ export class SourceEngine{
   getNotice(sourceId:string):string|undefined{return this.#notices.get(sourceId);}
   async getHome(sourceId:string,signal?:AbortSignal):Promise<HomeResult>{
     const result=await this.#invoke(sourceId,signal,(adapter)=>adapter.getHome(signal));const allow=this.#configs.get(sourceId)?.categories;
-    if(!allow?.length||!result.categories?.length)return result;const names=new Set(allow),categories=result.categories.filter(item=>names.has(item.name)),ids=new Set(categories.map(item=>item.id));
+    if(!allow?.length||!result.categories?.length)return result;const categories=visibleSourceCategories(result.categories,allow),ids=new Set(categories.map(item=>item.id));
     const filters=result.filters?Object.fromEntries(Object.entries(result.filters).filter(([id])=>ids.has(id))):undefined;return{...result,categories,...(filters&&Object.keys(filters).length?{filters}:result.filters?{filters:{}}:{})};
   }
   async getCategory(sourceId:string,categoryId:string,page=1,filters:Record<string,string>={},signal?:AbortSignal):Promise<CategoryResult>{return this.#invoke(sourceId,signal,adapter=>adapter.getCategory(categoryId,page,filters,signal));}
@@ -86,7 +88,7 @@ export class SourceEngine{
   }
   async #runAudit(sourceId:string):Promise<SourceAuditResult>{
     const stages:SourceAuditResult['stages']=[],run=async(stage:string,action:()=>Promise<unknown>)=>{const started=performance.now();try{const result=await action();stages.push({stage,ok:true,durationMs:Math.round(performance.now()-started)});return result;}catch(error){stages.push({stage,ok:false,durationMs:Math.round(performance.now()-started),message:error instanceof Error?error.message:String(error)});return undefined;}};
-    const missing=(stage:string,message:string)=>stages.push({stage,ok:false,durationMs:0,message});
+    const missing=(stage:string,message:string)=>stages.push({stage,ok:false,durationMs:0,message:`NOT_RUN: ${message}`});
     const skipped=(stage:string,message:string)=>stages.push({stage,ok:true,durationMs:0,message:`SKIPPED: ${message}`});
     const home=await run('home',()=>this.getHome(sourceId)) as HomeResult|undefined;
     const category=home?.categories?.[0];let categoryResult:CategoryResult|undefined;

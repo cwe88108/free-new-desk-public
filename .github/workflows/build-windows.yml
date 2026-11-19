@@ -98,14 +98,60 @@ jobs:
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Validate packaged UI performance evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $directory = Join-Path $PWD 'dist/ui-smoke'
+          $prefixes = @('scale-1-normal', 'scale-1-25-normal', 'scale-1-5-high-contrast', 'scale-2-high-contrast')
+          foreach ($prefix in $prefixes) {
+            $reportPath = Join-Path $directory ($prefix + '-surface-evidence.json')
+            $timingPath = Join-Path $directory ($prefix + '-surface-timing.jsonl')
+            $performancePath = Join-Path $directory ($prefix + '-performance.json')
+            foreach ($file in @($reportPath, $timingPath, $performancePath)) {
+              if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing UI smoke evidence: $file" }
+            }
+            $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+            if ($report.status -ne 'complete' -or $report.flushAcknowledged -ne $true -or $report.accepted -le 0 -or @($report.missingMetrics).Count -ne 0 -or $report.rejected -ne 0) {
+              throw "Incomplete surface timing evidence: $prefix"
+            }
+            $performance = Get-Content -LiteralPath $performancePath -Raw | ConvertFrom-Json
+            if ($performance.schemaVersion -ne 1 -or $performance.workload -ne 'packaged-ui-smoke-v1' -or $performance.durationMs -le 0) {
+              throw "Invalid performance telemetry envelope: $prefix"
+            }
+            if ($performance.counters.playbackStatsIpcCalls -le 0 -or $performance.uiMetrics.navigationMs.count -lt 8 -or $performance.uiMetrics.rendererFrameP95Ms.count -lt 1) {
+              throw "Performance telemetry is missing required workload samples: $prefix"
+            }
+          }
+          $routes = @('home', 'vod', 'live', 'music', 'player', 'search', 'favorites', 'history', 'sources', 'settings')
+          foreach ($route in $routes) {
+            $image = Join-Path $directory ('scale-1-normal-' + $route + '.jpg')
+            if (-not (Test-Path -LiteralPath $image -PathType Leaf)) { throw "Missing 100% DPI screenshot: $image" }
+          }
+          Write-Host 'All four DPI surface reports, performance telemetry files, and ten 100% DPI screenshots are complete.'
       - name: Upload 100% DPI UI evidence
+        id: upload_ui_100
+        continue-on-error: true
         if: always() && hashFiles('dist/ui-smoke/*.jpg') != ''
         uses: actions/upload-artifact@v4
         with:
           name: v${{ steps.package_version.outputs.version }}-ui-smoke-100dpi
           path: dist/ui-smoke/*.jpg
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
+      - name: Upload all DPI surface timing evidence
+        continue-on-error: true
+        id: upload_surface_timing
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-performance-evidence
+          path: |
+            dist/ui-smoke/*-surface-timing.jsonl
+            dist/ui-smoke/*-surface-evidence.json
+            dist/ui-smoke/*-performance.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Resolve verified Windows release assets
         id: release_assets
         shell: pwsh
@@ -131,8 +177,34 @@ jobs:
           $delimiter = 'release_paths_' + [Guid]::NewGuid().ToString('N')
           @("paths<<$delimiter") + $paths + @($delimiter) | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
       - name: Preserve verified Windows build artifacts
+        id: upload_release_artifacts
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: windows-x64-${{ github.sha }}
           path: ${{ steps.release_assets.outputs.paths }}
           if-no-files-found: error
+          retention-days: 7
+      - name: Report Windows artifact delivery status
+        if: always()
+        shell: pwsh
+        env:
+          UI_UPLOAD_OUTCOME: ${{ steps.upload_ui_100.outcome }}
+          SURFACE_UPLOAD_OUTCOME: ${{ steps.upload_surface_timing.outcome }}
+          RELEASE_UPLOAD_OUTCOME: ${{ steps.upload_release_artifacts.outcome }}
+        run: |
+          $outcomes = @(
+            @{ Name = '100% DPI screenshots'; Outcome = $env:UI_UPLOAD_OUTCOME },
+            @{ Name = 'four-DPI timing/performance evidence'; Outcome = $env:SURFACE_UPLOAD_OUTCOME },
+            @{ Name = 'verified Windows installer/portable outputs'; Outcome = $env:RELEASE_UPLOAD_OUTCOME }
+          )
+          $failed = @($outcomes | Where-Object { $_.Outcome -eq 'failure' })
+          if ($failed.Count -gt 0) {
+            $names = ($failed | ForEach-Object { $_.Name }) -join ', '
+            $message = "Windows build, native tests, packaging, and UI smoke checks completed independently of artifact delivery. These uploads failed: $names. Check upload logs; GitHub Actions storage quota or a transient artifact service error can prevent storage. Evidence was validated before upload."
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $message -Encoding utf8
+            Write-Warning $message
+          } else {
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Windows build, validation, and configured artifact uploads completed.' -Encoding utf8
+          }
+

@@ -8,10 +8,15 @@ const source=ts.createSourceFile('mini.ts',parse(await readFile(new URL('../../a
 function actions(names,context){const nodes=source.statements.filter(n=>ts.isFunctionDeclaration(n)&&names.includes(n.name.text));assert.equal(nodes.length,names.length);vm.runInNewContext(ts.transpileModule(nodes.map(n=>n.getText(source)).join('\n')+'\nglobalThis.actions={'+names.join(',')+'};',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context);return context.actions;}
 const ref=value=>({value});
 
-test('player status distinguishes paused sessions from idle and loading',async()=>{
+test('player status distinguishes buffering from playing, paused, idle and loading',async()=>{
   const template=parse(await readFile(new URL('../../apps/desktop/src/renderer/views/PlayerView.vue',import.meta.url),'utf8')).descriptor.template.content;
   const expression=template.match(/\{\{(playbackError\?'播放失败'[^}]+)\}\}/)?.[1];assert.ok(expression);
-  for(const [status,paused,playbackError,expected]of [['paused',true,'','已暂停'],['playing',false,'','播放中'],['loading',false,'','正在连接'],['idle',false,'','等待播放'],['paused',true,'error','播放失败']])assert.equal(vm.runInNewContext(expression,{runtimeSession:{status},paused,playbackError}),expected);
+  for(const [status,paused,liveBuffering,playbackError,expected]of [
+    ['paused',true,false,'','已暂停'],['playing',true,true,'','已暂停'],
+    ['playing',false,false,'','播放中'],['playing',false,true,'','正在缓冲'],
+    ['loading',false,false,'','正在连接'],['idle',false,false,'','等待播放'],
+    ['paused',true,false,'error','播放失败'],
+  ])assert.equal(vm.runInNewContext(expression,{runtimeSession:{status},paused,liveBuffering,playbackError}),expected);
 });
 
 test('home progress and skip controls use the displayed session; unavailable playback cannot seek',async()=>{

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed,reactive } from 'vue';
 import type { PlaybackSessionSnapshot } from '@free-new-desk/contracts';
+export {clockStats,clockStale,clockLoadStatus,clockRuntime,refreshPlaybackClock} from './playback-clock.js';
 
 export type PlaybackKind='vod'|'live'|'music'|null;
 export interface PlaybackSessionState{

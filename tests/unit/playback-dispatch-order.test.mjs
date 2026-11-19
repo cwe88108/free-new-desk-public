@@ -15,8 +15,43 @@ for(const [name,method,domain]of [['VodView','play','vod'],['SearchView','play',
   context.window={desktop:{playback:{play:()=>dispatch('vod')},live:{play:()=>dispatch('live')},diagnostics:{recordPerformance:async()=>true},app:{isUiSmoke:()=>false}}};
   context.playStatus=ref('');context.switchReasons=ref([]);context.nextTick=async()=>{};context.schedulePreview=()=>{};
   const action=await view(name,method,context),pending=method==='playLive'?action({sourceId:'source',channelId:'channel',name:'Channel'}):method==='openPlayer'?action():name==='LiveView'?action({id:'channel',name:'Channel'},undefined,true):action('route','episode','Episode');
-  assert.equal(events[0],domain);cleanup.resolve();await new Promise(resolve=>setImmediate(resolve));assert.ok(events.includes('navigation'),'navigation must not wait for unresolved media opening');navigation.resolve();opened.resolve({ok:true,routeIndex:0,routeCount:1});await pending;
+  assert.equal(events[0],domain);await new Promise(resolve=>setImmediate(resolve));assert.ok(events.includes('navigation'),'navigation must be dispatched while media opening and surface cleanup remain unresolved');cleanup.resolve();navigation.resolve();opened.resolve({ok:true,routeIndex:0,routeCount:1});await pending;
   assert.ok(events.indexOf(domain)<events.indexOf('navigation'));
+});
+
+test('search live reports load failure and ignores a superseded request',async()=>{
+  for(const superseded of [false,true]){
+    const stages=[],updates=[];
+    const ctx={performance:{now:()=>0},error:ref(''),router:{push:async()=>{}},playbackSession:{begin:()=>{},update:value=>updates.push(value)},emitPlaybackStage:(...args)=>stages.push(args),window:{desktop:{live:{play:async()=>{if(superseded)throw new Error('[PLAYBACK_SUPERSEDED]');return{ok:false,detail:'station failed'};}},diagnostics:{recordPerformance:async()=>true},app:{isUiSmoke:()=>false}}}};
+    const action=await view('SearchView','playLive',ctx);
+    await action({sourceId:'source',channelId:'channel',name:'Channel'});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(stages.map(([stage])=>stage),superseded?['connecting']:['connecting','failed']);
+    assert.deepEqual(updates,[]);
+  }
+});
+
+test('a superseded VOD click clears only its pending playback without showing a failure',async()=>{
+  const stages=[],cleared=[],toasts=[];
+  const ctx={performance:{now:()=>0},error:ref(''),detail:ref({id:'video',name:'Video',episodes:[]}),sourceId:ref('source'),selectedSource:ref(null),playBusy:ref(false),nowPlaying:ref(null),localStorage:{setItem:()=>{}},crypto:{randomUUID:()=> 'old-pending'},savePendingPlayback:()=>{},clearPendingPlayback:id=>cleared.push(id),router:{push:async()=>{}},playbackSession:{begin:()=>{}},emitPlaybackStage:stage=>stages.push(stage),toast:{error:message=>toasts.push(message)},window:{desktop:{playback:{play:async()=>{throw new Error('[PLAYBACK_SUPERSEDED]');}},diagnostics:{recordPerformance:async()=>true},app:{isUiSmoke:()=>false}}}};
+  const action=await view('VodView','play',ctx);
+  await action('route','episode','Episode');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(cleared,['old-pending']);
+  assert.deepEqual(stages,['source-resolving']);
+  assert.deepEqual(toasts,[]);
+  assert.equal(ctx.playBusy.value,false);
+});
+
+test('opening the live player reports a failed load without saving a successful route',async()=>{
+  const stages=[],saved=[];
+  const ctx={performance:{now:()=>0},selected:ref({id:'channel',name:'Channel'}),sourceId:ref('source'),manualRoute:ref(null),fallbackEnabled:ref(true),activeRoute:ref(null),previewActive:ref(true),syncPreview:async()=>{},router:{push:async()=>{}},emitPlaybackStage:(...args)=>stages.push(args),saveLiveSession:value=>saved.push(value),window:{desktop:{live:{play:async()=>({ok:false,routeIndex:0,detail:'channel unavailable'})},diagnostics:{recordPerformance:async()=>true},app:{isUiSmoke:()=>false}}}};
+  const action=await view('LiveView','openPlayer',ctx);
+  await action();
+  assert.deepEqual(stages.map(([stage])=>stage),['connecting','failed']);
+  assert.equal(stages[1][2],'channel unavailable');
+  assert.equal(ctx.activeRoute.value,null);
+  assert.deepEqual(saved,[]);
 });
 
 test('stale automatic requests are rejected in preload before disturbing active live recovery state',async()=>{

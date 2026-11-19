@@ -47,3 +47,53 @@ test('a crash retries concurrent operations on one restored replacement without 
   const {client,children}=await configured(t),first=client.home(source.id),second=client.search(source.id,'test');await turn();children[0].emit('exit',1);await turn();assert.equal(children.length,2);const child=children[1];assert.equal(child.killed,false);assert.deepEqual(child.methods(),['source.configure']);child.respond('source.configure');await turn();child.respond('source.replaceAll');await turn();assert.equal(child.killed,false);child.respond('source.home',{items:[]});child.respond('source.search',{page:1,items:[]});await Promise.all([first,second]);
 });
 test.after(()=>{hooks.deregister();delete globalThis.__fndRecoveryTestFork;});
+
+
+test('background initialization returns before acknowledgements while all source calls share the ordered barrier',async t=>{
+  const {client,children}=setup(t),config={executableTrustStoreDir:'private/approvals'},sources=[{...source}];
+  let ready=false;const initialization=client.initialize(config,sources).then(()=>ready=true);
+  // Mounting/local IPC can proceed immediately, even with a stalled worker.
+  assert.equal(ready,false);assert.equal(children.length,1);
+  config.executableTrustStoreDir='changed';sources[0].endpoint='https://example.com/changed.js';
+  const home=client.home(source.id),search=client.search(source.id,'test');await turn();
+  assert.deepEqual(children[0].methods(),['source.configure']);assert.equal(children[0].requests[0].params.executableTrustStoreDir,'private/approvals');
+  children[0].respond('source.configure');await turn();assert.equal(ready,false);
+  assert.deepEqual(children[0].methods(),['source.configure','source.replaceAll']);assert.equal(children[0].requests[1].params.sources[0].endpoint,source.endpoint);
+  children[0].respond('source.replaceAll');await initialization;await turn();
+  assert.deepEqual(children[0].methods(),['source.configure','source.replaceAll','source.home','source.search']);
+  children[0].respond('source.home',{items:[]});children[0].respond('source.search',{page:1,items:[]});await Promise.all([home,search]);
+});
+
+test('failed background initialization rejects waiting calls and later calls restore the initial snapshot',async t=>{
+  const {client,children}=setup(t);
+  const initialization=assert.rejects(client.initialize({executableTrustStoreDir:'private/approvals'},[{...source}]),/restore failed/);
+  const home=assert.rejects(client.home(source.id),/restore failed/);await turn();children[0].fail('source.configure');await Promise.all([initialization,home]);
+  assert.deepEqual(children[0].methods(),['source.configure']);assert.equal(children[0].killed,true);
+  const retry=client.home(source.id);await turn();children[1].respond('source.configure');await turn();
+  assert.equal(children[1].requests[1].params.sources[0].id,source.id);children[1].respond('source.replaceAll');await turn();children[1].respond('source.home',{items:[]});await retry;
+});
+
+test('cancellation and shutdown during background initialization do not leak a source request',async t=>{
+  const {client,children}=setup(t),controller=new AbortController();
+  const initialization=assert.rejects(client.initialize({},[{...source}]),/stopped/);
+  const home=assert.rejects(client.home(source.id,controller.signal),{name:'AbortError'});controller.abort();await home;
+  assert.deepEqual(children[0].methods(),['source.configure']);client.stop();await initialization;assert.equal(children[0].killed,true);
+});
+
+test('permanent shutdown between restore acknowledgements prevents retry from resurrecting the worker',async t=>{
+  const {client,children}=setup(t);
+  const init=assert.rejects(client.initialize({},[{...source}]),/exited/);
+  const home=assert.rejects(client.home(source.id),/exited/);await turn();
+  children[0].respond('source.configure');client.shutdown();
+  await Promise.all([init,home]);await turn();assert.equal(children.length,1);assert.deepEqual(children[0].methods(),['source.configure']);
+  await assert.rejects(client.ping(),/shut down/);assert.equal(children.length,1);
+});
+
+test('a persisted source update during failed initialization is restored on the next worker, without hiding failure',async t=>{
+  const {client,children}=setup(t),latest={...source,endpoint:'https://example.com/new.js'};
+  const init=assert.rejects(client.initialize({},[{...source}]),/restore failed/);
+  const update=assert.rejects(client.replaceAll([latest]),/restore failed/);await turn();children[0].fail('source.configure');await Promise.all([init,update]);
+  const home=client.home(source.id);await turn();children[1].respond('source.configure');await turn();
+  assert.equal(children[1].requests[1].params.sources[0].endpoint,latest.endpoint);
+  children[1].respond('source.replaceAll');await turn();children[1].respond('source.home',{items:[]});await home;
+});

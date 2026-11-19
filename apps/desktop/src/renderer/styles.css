@@ -125,3 +125,14 @@ input,select,textarea{border-radius:8px}
 .timeline-day{display:flex;align-items:center;gap:12px;margin:18px 0 4px;font-size:12px;color:var(--muted)}
 .timeline-day b{font-family:"Iowan Old Style","STSong",serif;font-size:14.5px;color:var(--text);font-weight:600}
 .timeline-day::after{content:"";flex:1;height:1px;background:var(--line-soft)}
+
+
+/* Focus feedback for keyboard and remote navigation. */
+@media (prefers-reduced-motion: no-preference) {
+  .nav-item:focus-visible { transform: translateX(2px); background: var(--accent-soft); }
+  .poster-card:focus-visible .poster-art,
+  .poster-card:focus-within .poster-art {
+    transform: scale(1.025);
+    box-shadow: 0 8px 22px -10px rgba(35,28,18,.35);
+  }
+}

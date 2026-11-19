@@ -9,8 +9,17 @@ class SourceProcessError extends Error{constructor(message:string,readonly child
 export class SourceEngineClient{
   #child:UtilityProcess|undefined;#stderrTail='';#utilityError='';readonly #pending=new Map<string,PendingCall>();
   #runtimeConfig:RuntimeConfig|undefined;#sources:SourceConfig[]|undefined;#ready:Promise<void>|undefined;
+  #closed=false;
   #configSequence=0;#savedConfigSequence=0;#sourceSequence=0;#savedSourceSequence=0;
+  // Seed the first restore before starting the worker. Every request shares #ready,
+  // so the window can mount while configure -> replaceAll is still in flight.
+  initialize(config:RuntimeConfig,sources:SourceConfig[]):Promise<void>{
+    if(this.#child)throw new Error('Source Engine is already started');
+    this.#runtimeConfig=structuredClone(config);this.#sources=structuredClone(sources);
+    this.start();return this.#ready!;
+  }
   start():void{
+    if(this.#closed)throw new Error('Source Engine is shut down');
     if(this.#child)return;this.#stderrTail='';this.#utilityError='';const entry=path.join(app.getAppPath(),'services','source-engine','dist','worker.js');
     const child=utilityProcess.fork(entry,[],{serviceName:'Free New Desk Source Engine',stdio:['ignore','ignore','pipe']});child.stderr?.setEncoding('utf8');
     child.stderr?.on('data',chunk=>{if(this.#child===child)this.#stderrTail=(this.#stderrTail+String(chunk)).slice(-4000);});child.on('error',(type,location,report)=>{if(this.#child===child)this.#utilityError=`${type} at ${location}: ${report}`.slice(-4000);});
@@ -19,6 +28,7 @@ export class SourceEngineClient{
     this.#ready=this.#restore(child).catch(error=>{if(this.#child===child)this.stop();throw error;});void this.#ready.catch(()=>undefined);
   }
   #rejectChild(child:UtilityProcess,error:Error):void{for(const[id,pending]of this.#pending)if(pending.child===child){clearTimeout(pending.timer);pending.abort?.();this.#pending.delete(id);pending.reject(error);}}
+  shutdown():void{this.#closed=true;this.stop();}
   stop():void{const child=this.#child;this.#child=undefined;this.#ready=undefined;if(child){this.#rejectChild(child,new SourceProcessError('Source Engine stopped',child));child.kill();}}
   #cancel(callId:string,child:UtilityProcess):void{try{child.postMessage({id:randomUUID(),method:'source.cancel',params:{callId}} satisfies SourceEngineRequest);}catch{/* a disconnected child cannot accept cancellation */}}
   async #restore(child:UtilityProcess):Promise<void>{
@@ -32,7 +42,7 @@ export class SourceEngineClient{
   async configure(config:RuntimeConfig):Promise<void>{const snapshot=structuredClone(config),sequence=++this.#configSequence;await this.#result({id:randomUUID(),method:'source.configure',params:snapshot});if(sequence>this.#savedConfigSequence){this.#runtimeConfig=snapshot;this.#savedConfigSequence=sequence;}}
   async prepareExecutable(config:SourceConfig):Promise<ExecutableReview>{return await this.#result({id:randomUUID(),method:'source.prepareExecutable',params:{config}}) as ExecutableReview;}
   async resetExecutable(sourceId:string):Promise<void>{await this.#result({id:randomUUID(),method:'source.resetExecutable',params:{sourceId}});}
-  async replaceAll(sources:SourceConfig[]):Promise<void>{const snapshot=structuredClone(sources),sequence=++this.#sourceSequence;await this.#result({id:randomUUID(),method:'source.replaceAll',params:{sources:snapshot}});if(sequence>this.#savedSourceSequence){this.#sources=snapshot;this.#savedSourceSequence=sequence;}}
+  async replaceAll(sources:SourceConfig[]):Promise<void>{const snapshot=structuredClone(sources),sequence=++this.#sourceSequence;if(sequence>this.#savedSourceSequence){this.#sources=snapshot;this.#savedSourceSequence=sequence;}await this.#result({id:randomUUID(),method:'source.replaceAll',params:{sources:snapshot}});}
   async list():Promise<SourceSummary[]>{const result=await this.#result({id:randomUUID(),method:'source.list'});return Array.isArray(result)?result:[];}
   async home(sourceId:string,signal?:AbortSignal):Promise<HomeResult>{return await this.#result({id:randomUUID(),method:'source.home',params:{sourceId}},signal) as HomeResult;}
   async category(sourceId:string,categoryId:string,page=1,filters:Record<string,string>={},signal?:AbortSignal):Promise<CategoryResult>{return await this.#result({id:randomUUID(),method:'source.category',params:{sourceId,categoryId,page,filters}},signal) as CategoryResult;}
@@ -43,7 +53,7 @@ export class SourceEngineClient{
   async audit(sourceId:string):Promise<SourceAuditResult>{return await this.#result({id:randomUUID(),method:'source.audit',params:{sourceId}}) as SourceAuditResult;}
   async releaseLease(leaseId:string):Promise<void>{await this.#result({id:randomUUID(),method:'source.releaseLease',params:{leaseId}});}
   async #result(request:SourceEngineRequest,signal?:AbortSignal,retry=true):Promise<SourceEngineResult>{
-    let response:SourceEngineResponse;try{response=await this.#request(request,signal);}catch(error){const message=error instanceof Error?error.message:String(error);if(retry&&!signal?.aborted&&/exited|destroyed|closed|channel|ipc|pipe/i.test(message)){if(!(error instanceof SourceProcessError)||this.#child===error.child)this.stop();const next={...request,id:randomUUID()} as SourceEngineRequest;return this.#result(next,signal,false);}throw error;}
+    let response:SourceEngineResponse;try{response=await this.#request(request,signal);}catch(error){const message=error instanceof Error?error.message:String(error);if(retry&&!this.#closed&&!signal?.aborted&&/exited|destroyed|closed|channel|ipc|pipe/i.test(message)){if(!(error instanceof SourceProcessError)||this.#child===error.child)this.stop();const next={...request,id:randomUUID()} as SourceEngineRequest;return this.#result(next,signal,false);}throw error;}
     if('error'in response)throw new Error('['+response.error.code+'] '+response.error.message);return response.result;
   }
   async #request(request:SourceEngineRequest,signal?:AbortSignal):Promise<SourceEngineResponse>{

@@ -6,6 +6,8 @@ if (-not $ReleaseDir) { $ReleaseDir = Join-Path $root 'dist/releases' }
 $sourcePackage = if ($AppPath) { Split-Path -Parent ([IO.Path]::GetFullPath($AppPath)) } else { Join-Path $ReleaseDir 'win-unpacked' }
 if (-not (Test-Path (Join-Path $sourcePackage 'Free New Desk.exe'))) { throw "Packaged executable not found: $sourcePackage" }
 
+. (Join-Path $PSScriptRoot 'windows-smoke-windows.ps1')
+
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 $isolationRoot = [IO.Path]::GetFullPath((Join-Path $tempRoot ('free-new-desk-package-isolated-' + [guid]::NewGuid().ToString('N'))))
 $packageDir = Join-Path $isolationRoot 'win-unpacked'
@@ -18,28 +20,40 @@ $process = $null
 try {
   Write-Host "Starting isolated packaged application renderer smoke test: $exe"
   $electronLog = Join-Path $smokeDir 'electron.log'
-  $process = Start-Process -FilePath $exe -ArgumentList @('--user-data-dir="' + $smokeDir + '"', '--enable-logging', '--log-file="' + $electronLog + '"') -PassThru
+  $process = Start-Process -FilePath $exe -ArgumentList @('--user-data-dir="' + $smokeDir + '"', '--enable-logging', '--log-file="' + $electronLog + '"') -WindowStyle Normal -PassThru
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
-  $lastTitle = ''
+  $lastTitles = @()
   $readyAt = $null
+  $readyWindow = [IntPtr]::Zero
   while ([DateTime]::UtcNow -lt $deadline) {
     Start-Sleep -Milliseconds 250
     $process.Refresh()
     if ($process.HasExited) { throw "Packaged application exited during startup with code $($process.ExitCode)." }
-    $lastTitle = $process.MainWindowTitle
-    if ($lastTitle -match '(?i)javascript.*error|renderer error|^error$') { throw "Packaged application displayed an error window: $lastTitle" }
-    if ($lastTitle -eq 'Free New Desk - Ready') {
-      if (-not $readyAt) { $readyAt = [DateTime]::UtcNow; Write-Host 'Packaged Electron renderer mounted; observing post-mount stability.' }
+    $windows = [FreeNewDeskSmokeWindows]::VisibleForProcess($process.Id)
+    $lastTitles = @($windows | ForEach-Object { $_.Title })
+    $errorTitles = @($lastTitles -match '(?i)javascript.*error|renderer error|^error$')
+    if ($errorTitles.Count -gt 0) { throw "Packaged application displayed an error window: $($errorTitles -join ', ')" }
+    if ($readyAt) {
+      $mounted = $windows | Where-Object { $_.Handle -eq $readyWindow } | Select-Object -First 1
+      if (-not $mounted -or $mounted.Title -cne 'Free New Desk - Ready') {
+        throw "Renderer window left Ready state after mount. Visible titles: '$($lastTitles -join "', '")'"
+      }
       if (([DateTime]::UtcNow - $readyAt).TotalSeconds -ge 2) { Write-Host 'Packaged Electron renderer remained Ready for 2 seconds.'; return }
-    } elseif ($readyAt) { throw "Renderer left Ready state after mount. Current title: '$lastTitle'" }
-  }  throw "Packaged application renderer did not remain Ready within 30 seconds. Last window title: '$lastTitle'"
+    } else {
+      $mounted = $windows | Where-Object { $_.Title -ceq 'Free New Desk - Ready' } | Select-Object -First 1
+      if ($mounted) {
+        $readyWindow = $mounted.Handle
+        $readyAt = [DateTime]::UtcNow
+        Write-Host 'Packaged Electron renderer mounted; observing post-mount stability.'
+      }
+    }
+  }
+  throw "Packaged application renderer did not remain Ready within 30 seconds. Visible titles: '$($lastTitles -join "', '")'"
 } catch {
   Write-Warning "Packaged smoke startup failed: $($_.Exception.Message)"
   $candidates = @(
     (Join-Path $smokeDir 'logs/app.log'),
-    (Join-Path $smokeDir 'electron.log'),
-    (Join-Path $env:APPDATA 'free-new-desk/logs/app.log'),
-    (Join-Path $env:APPDATA 'Free New Desk/logs/app.log')
+    (Join-Path $smokeDir 'electron.log')
   )
   foreach ($logFile in ($candidates | Select-Object -Unique)) {
     if (Test-Path -LiteralPath $logFile -PathType Leaf) {

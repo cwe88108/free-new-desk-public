@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed,onMounted,ref } from 'vue';
+import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
 import { useRouter } from 'vue-router';
 import AppIcon from '../components/AppIcon.vue';
 import {useSourceChanges} from '../source-changes';
@@ -8,15 +8,18 @@ import { listVodFavorites,type VodFavorite } from '../favorites';
 import { useToastStore } from '../stores/toast';
 const toast=useToastStore();
 useSourceChanges(refreshSourceSummary);
-let sourceSummaryGeneration=0;
+let sourceSummaryGeneration=0,dashboardGeneration=0,disposed=false;
+onBeforeUnmount(()=>{disposed=true;sourceSummaryGeneration++;dashboardGeneration++;updateRequest++;});
 async function refreshSourceSummary(){
   const generation=++sourceSummaryGeneration;
   const [point,live,status,settings]=await Promise.allSettled([window.desktop.source.list(),window.desktop.live.listSources(),window.desktop.source.health(),window.desktop.settings.list()]);
-  if(generation!==sourceSummaryGeneration)return;
+  if(disposed||generation!==sourceSummaryGeneration)return;
   if(point.status==='fulfilled')sources.value=point.value;
   if(live.status==='fulfilled')liveSources.value=live.value;
   if(status.status==='fulfilled')health.value=status.value;
   if(settings.status==='fulfilled')importRecords.value=parseImports(settings.value);
+  const fallback=liveSources.value.filter(item=>item.importedAt).map(item=>({kind:item.origin==='local-file'?'本地直播':'网络直播',name:item.name,source:item.sourceLabel??item.endpoint,importedAt:item.importedAt!}));
+  importRecords.value=[...importRecords.value,...fallback].sort((a,b)=>b.importedAt.localeCompare(a.importedAt)).filter((item,index,array)=>array.findIndex(other=>other.name===item.name&&other.importedAt===item.importedAt)===index).slice(0,5);
 }
 
 interface ImportRecord{kind:string;name:string;source?:string;count?:number;importedAt:string;}
@@ -50,34 +53,26 @@ const sourceScore=computed(()=>health.value.length?Math.round(health.value.reduc
 const recentCards=computed(()=>recent.value.slice(0,4));
 const favoriteCards=computed(()=>vodFavorites.value.slice(0,5));
 const greeting=computed(()=>{const hour=new Date().getHours();if(hour<5)return'夜深了';if(hour<11)return'早上好';if(hour<14)return'午间安好';if(hour<18)return'下午好';return'晚间安好';});
-const decodeItems=computed(()=>[
-  {label:'当前硬件解码',value:String(diagnostics.value.hardwareDecode??'待播放检测')},
-  {label:'视频输出',value:String(diagnostics.value.videoOutput??'由 PlayerHost 查询')},
-  {label:'libmpv',value:String(diagnostics.value.libmpv??'待检测').slice(0,34)},
-  {label:'GPU',value:String(diagnostics.value.gpu??'待检测').slice(0,34)}
-]);
-
 function parseImports(settings:Record<string,string>):ImportRecord[]{try{const value=JSON.parse(settings['imports.recent']??'[]') as unknown;return Array.isArray(value)?value.filter((item):item is ImportRecord=>Boolean(item&&typeof item==='object'&&typeof(item as ImportRecord).name==='string'&&typeof(item as ImportRecord).importedAt==='string')).slice(0,6):[];}catch{return[];}}
 function progress(item:PlaybackHistoryEntry|undefined){return item?.duration?Math.min(1,Math.max(0,(item.position??0)/item.duration)):0;}
 function formatDuration(value:number|undefined){const minutes=Math.max(0,Math.round((value??0)/60));return minutes>=60?`${Math.floor(minutes/60)} 小时 ${minutes%60} 分钟`:`${minutes} 分钟`;}
 async function loadDashboard(){
-  const updateId=++updateRequest;checkingUpdate.value=true;
-  refreshing.value=true;actionMessage.value='';
-  const results=await Promise.allSettled([window.desktop.source.ping(),window.desktop.app.getInfo(),window.desktop.history.list(8),window.desktop.source.list(),window.desktop.live.listSources(),window.desktop.reservation.list(),window.desktop.source.health(),window.desktop.diagnostics.get(),window.desktop.update.check(),listVodFavorites(),window.desktop.live.favorites(),window.desktop.settings.list()]);
-  sourceHealthy.value=results[0]?.status==='fulfilled'?results[0].value:false;
-  if(results[1]?.status==='fulfilled')info.value=results[1].value;
-  if(results[2]?.status==='fulfilled')recent.value=results[2].value;
-  if(results[3]?.status==='fulfilled')sources.value=results[3].value;
-  if(results[4]?.status==='fulfilled')liveSources.value=results[4].value;
-  if(results[5]?.status==='fulfilled')reservations.value=results[5].value;
-  if(results[6]?.status==='fulfilled')health.value=results[6].value;
-  if(results[7]?.status==='fulfilled')diagnostics.value=results[7].value;
-  if(updateId===updateRequest){if(results[8]?.status==='fulfilled'){update.value=results[8].value;updateError.value='';}else{update.value=null;updateError.value=results[8]?.status==='rejected'?String(results[8].reason?.message??'更新检查失败'):'尚未检查';}checkingUpdate.value=false;}
-  if(results[9]?.status==='fulfilled'){vodFavorites.value=results[9].value;vodFavoriteCount.value=results[9].value.length;}
-  if(results[10]?.status==='fulfilled')liveFavoriteCount.value=results[10].value.length;
-  if(results[11]?.status==='fulfilled')importRecords.value=parseImports(results[11].value);
-  const fallback=liveSources.value.filter(item=>item.importedAt).map(item=>({kind:item.origin==='local-file'?'本地直播':'网络直播',name:item.name,source:item.sourceLabel??item.endpoint,importedAt:item.importedAt!}));
-  importRecords.value=[...importRecords.value,...fallback].sort((a,b)=>b.importedAt.localeCompare(a.importedAt)).filter((item,index,array)=>array.findIndex(other=>other.name===item.name&&other.importedAt===item.importedAt)===index).slice(0,5);
+  const generation=++dashboardGeneration,updateId=++updateRequest;
+  const current=()=>!disposed&&generation===dashboardGeneration;
+  checkingUpdate.value=true;refreshing.value=true;actionMessage.value='';
+  // Runtime probes and network updates settle independently of local library data.
+  void window.desktop.source.ping().then(ok=>{if(current())sourceHealthy.value=ok;},()=>{if(current())sourceHealthy.value=false;});
+  void window.desktop.diagnostics.dashboard().then(value=>{if(current())diagnostics.value=value;},()=>{});
+  void window.desktop.update.check().then(value=>{if(current()&&updateId===updateRequest){update.value=value;updateError.value='';}},error=>{if(current()&&updateId===updateRequest){update.value=null;updateError.value=String(error?.message??'更新检查失败');}}).finally(()=>{if(current()&&updateId===updateRequest)checkingUpdate.value=false;});
+  const summary=refreshSourceSummary();
+  const results=await Promise.allSettled([window.desktop.app.getInfo(),window.desktop.history.list(8),window.desktop.reservation.list(),listVodFavorites(),window.desktop.live.favorites()]);
+  if(!current())return;
+  if(results[0]?.status==='fulfilled')info.value=results[0].value;
+  if(results[1]?.status==='fulfilled')recent.value=results[1].value;
+  if(results[2]?.status==='fulfilled')reservations.value=results[2].value;
+  if(results[3]?.status==='fulfilled'){vodFavorites.value=results[3].value;vodFavoriteCount.value=results[3].value.length;}
+  if(results[4]?.status==='fulfilled')liveFavoriteCount.value=results[4].value.length;
+  await summary;if(!current())return;
   refreshing.value=false;
 }
 function canResume(item:PlaybackHistoryEntry|undefined):item is PlaybackHistoryEntry{return Boolean(item?.sourceId&&item.videoId&&item.flag!==undefined&&item.episodeId);}
@@ -88,7 +83,7 @@ async function resume(item?:PlaybackHistoryEntry){
   catch(value){actionMessage.value=`无法继续播放：${value instanceof Error?value.message:String(value)}`;toast.error('无法继续播放',actionMessage.value);}finally{resuming.value=false;}
 }
 const resumableFirst=computed(()=>recent.value.find(item=>item.flag!==undefined&&item.episodeId)??recent.value[0]);
-async function checkUpdate(){const request=++updateRequest;checkingUpdate.value=true;update.value=null;updateError.value='';try{const result=await window.desktop.update.check();if(request===updateRequest){update.value=result;toast.success(result.available?`发现新版本 ${result.latest}`:'已是最新版本');}}catch(value){if(request===updateRequest){updateError.value=value instanceof Error?value.message:String(value);toast.error('更新检查失败',updateError.value);}}finally{if(request===updateRequest)checkingUpdate.value=false;}}
+async function checkUpdate(){const request=++updateRequest;checkingUpdate.value=true;update.value=null;updateError.value='';try{const result=await window.desktop.update.check();if(!disposed&&request===updateRequest){update.value=result;toast.success(result.available?`发现新版本 ${result.latest}`:'已是最新版本');}}catch(value){if(!disposed&&request===updateRequest){updateError.value=value instanceof Error?value.message:String(value);toast.error('更新检查失败',updateError.value);}}finally{if(!disposed&&request===updateRequest)checkingUpdate.value=false;}}
 onMounted(loadDashboard);
 </script>
 

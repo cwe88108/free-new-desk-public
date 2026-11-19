@@ -1,21 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount,onMounted,ref } from 'vue';
+import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
 import type {PlaybackHistoryEntry} from '@free-new-desk/contracts';
-import type { PlaybackSessionSnapshot,PlayerCommand,PlayerStats } from '@free-new-desk/contracts';
+import type { PlaybackSessionSnapshot,PlayerCommand } from '@free-new-desk/contracts';
 import AppIcon from '../components/AppIcon.vue';
-import { adjacentMusicId,readQueue } from '../stores/music-playback';
+import { adjacentMusicId,readQueue,clockStats,clockStale,refreshPlaybackClock } from '../stores/music-playback';
 import HomeView from './HomeView.vue';
 
 const miniExpanded=ref(localStorage.getItem('ui.miniPlayerExpanded')!=='false');
-const playerStats=ref<PlayerStats|null>(null);
+const playerStats=clockStats;
 const runtime=ref<PlaybackSessionSnapshot|null>(null);
-const reachable=ref(false);const miniError=ref('');
-let poll:ReturnType<typeof setInterval>|undefined;let removeRuntime:(()=>void)|undefined;
+const reachable=computed(()=>!clockStale.value&&clockStats.value?.sampleFresh===true);const miniError=ref('');
+let removeRuntime:(()=>void)|undefined;
 
-async function refresh(){
-  try{const sample=await window.desktop.playback.query('stats');if(sample.sampleFresh!==true||!sample.requestId){reachable.value=false;return;}playerStats.value=sample;reachable.value=true;}
-  catch{reachable.value=false;}
-}
+async function refresh(){await refreshPlaybackClock().catch(()=>undefined);}
 function toggle(){miniExpanded.value=!miniExpanded.value;localStorage.setItem('ui.miniPlayerExpanded',String(miniExpanded.value));}
 function controlDisplayedPlayer(command:PlayerCommand){const sample=playerStats.value;if(!sample?.requestId)throw new Error('播放会话已变化，请刷新后重试。');return window.desktop.playback.control({...command,requestId:sample.requestId,...(sample.loadId?{loadId:sample.loadId}:{})});}
 async function pause(){if(!reachable.value)return;try{const result=await controlDisplayedPlayer({command:'pause',value:!playerStats.value?.paused});if(!result.ok)throw new Error(result.detail??'暂停/继续操作失败');miniError.value='';await refresh();}catch(error){miniError.value=error instanceof Error?error.message:String(error);}}
@@ -29,8 +26,8 @@ function canSeek(){return reachable.value&&Number(playerStats.value?.duration)>0
 async function seek(value:number,absolute=false){if(!canSeek())return;try{const result=await controlDisplayedPlayer({command:'seek',value,absolute});if(!result.ok)throw new Error(result.detail??'进度调整失败');miniError.value='';await refresh();}catch(error){miniError.value=error instanceof Error?error.message:String(error);}}
 function hasMusicAdjacent(){return runtime.value?.domain==='music'&&readQueue().length>1;}
 
-onMounted(async()=>{runtime.value=await window.desktop.playback.runtimeSession().catch(()=>null);removeRuntime=window.desktop.playback.onRuntimeSessionChanged(value=>{runtime.value=value;});await refresh();poll=setInterval(refresh,1500);});
-onBeforeUnmount(()=>{if(poll)clearInterval(poll);removeRuntime?.();});
+onMounted(async()=>{runtime.value=await window.desktop.playback.runtimeSession().catch(()=>null);removeRuntime=window.desktop.playback.onRuntimeSessionChanged(value=>{runtime.value=value;});await refresh();});
+onBeforeUnmount(()=>{removeRuntime?.();});
 </script>
 
 <template>

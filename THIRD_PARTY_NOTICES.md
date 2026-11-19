@@ -10,11 +10,11 @@ Free New Desk is a clean implementation. Third-party dependencies retain their o
 | Vue Router | 4.5.1 | MIT | https://github.com/vuejs/router | Yes |
 | Zod | 3.25.76 | MIT | https://github.com/colinhacks/zod | Yes |
 | music-metadata | 11.16.1 | MIT | https://github.com/Borewit/music-metadata | Yes |
-| mpv / libmpv | commit `c152964208` | LGPL-2.1-or-later build; bundled FFmpeg declared LGPLv3 by provider | https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-10-04-c152964208 | Windows package |
+| mpv / libmpv | commit `8ca245f213` | LGPL-2.1-or-later build; bundled FFmpeg declared LGPLv3 by provider | https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-11-03-8ca245f213 | Windows package |
 
 SQLite persistence uses the `node:sqlite` module embedded in Node.js/Electron. It does not add a separate npm native addon to the package.
 
-The Windows package currently bundles `mpv-dev-lgpl-x86_64-20261004-git-c152964208.7z` from `zhongfly/mpv-winbuild`. The archive SHA-256 recorded by the source manifest is `b656b1d3f18f3db619894c22b68023acabd856e9e026b2a8516f30f1a44ee0bc`; the bundled `libmpv-2.dll` SHA-256 is `ee7dde89da6ddecb2adf7fc7585d4d89124dfaa2e1b476393a04c06ab7b02ad6`. See `third_party/mpv/win-x64/SOURCE.txt` for the pinned provider and upstream commit. A validated archive is retained in the local runtime cache for repeat builds because upstream daily releases may expire.
+The Windows package currently bundles `mpv-dev-lgpl-x86_64-20261103-git-8ca245f213.7z` from `zhongfly/mpv-winbuild`. The archive SHA-256 recorded by the source manifest is `8a39770639ec9c3a391cfa45406bf82b69c964364ce538441287d13793b2f6a6`; the bundled `libmpv-2.dll` SHA-256 is `f4509608a1161c654ec7cc1da740df02ae665451e5ed1311e7876f0e721c98a2`. See `third_party/mpv/win-x64/SOURCE.txt` for the pinned provider and upstream commit. The exact validated archive is retained under third_party/mpv/vendor for cold-cache builds because upstream daily releases expire after 30 days. Provider licensing declarations are not an independent compliance guarantee; public redistribution requires separate review.
 
 Source adapters are independently implemented from documented protocol behavior. No FongMi/TV or zyfun source code is copied into this repository.
 

@@ -66,7 +66,7 @@ export class ProxyService{
   async #fetch(target:string,headers:Record<string,string>,method:string,signal:AbortSignal):Promise<{response:Response;url:string;headers:Record<string,string>}>{
     let url=target;
     const initial=new Headers(headers);
-    if(!initial.has('user-agent'))initial.set('user-agent','FreeNewDesk/1.5.0');
+    if(!initial.has('user-agent'))initial.set('user-agent','FreeNewDesk/1.5.2');
     let forwarded:Record<string,string>=Object.fromEntries(initial);
     for(let redirects=0;redirects<=8;redirects+=1){
       if(!/^https?:$/.test(new URL(url).protocol))throw new Error('Proxy redirect protocol is not supported');

@@ -42,3 +42,12 @@ test('a new pause invalidates an already prepared automatic successor',()=>{
   const c=new PlaybackSessionController(()=>{}),a=c.begin('music');c.playing(a.requestId,'load-a');const parent=c.current();c.requestPause(a.requestId,true);
   assert.throws(()=>c.begin('music',{},'auto-next',parent),/PLAYBACK_SUPERSEDED/);
 });
+test('stop during a same-session route replacement fences every load in that session',async()=>{
+  const {client,controller:c,calls}=await subject();const a=c.begin('live');c.playing(a.requestId,'previous-route');
+  // The new route may already be accepted natively while its load ACK is still pending.
+  const stopped=client.command({command:'stop',requestId:a.requestId,loadId:'previous-route'});
+  const payload=JSON.parse(JSON.stringify(calls[0].args[1]));
+  assert.equal(payload.sessionGeneration,a.generation);
+  assert.equal(payload.loadId,undefined,'stop must not be rejected against the previous route load ID');
+  calls[0].resolve({ok:true});await stopped;assert.equal(c.current().status,'stopped');
+});

@@ -62,14 +62,41 @@ test('v1.4.14 S2 RuntimeManager single-flights init and serializes one mutable r
   await manager.destroy();
 });
 
-test('RuntimeManager caller can abort while shared initialization continues safely',async()=>{
+test('RuntimeManager last initialization waiter aborts creation and disposes a late adapter',async()=>{
+  let creates=0,initSignal;const destroyed=[];let releaseInit;
+  const gate=new Promise(resolve=>{releaseInit=resolve;});
+  const manager=new RuntimeManager({maxExecutable:2,idleMs:50,initWaitMs:500,isExecutable:()=>true,create:async(cfg,signal)=>{creates+=1;initSignal=signal;await gate;return mockAdapter(cfg.configRevision,destroyed);}});
+  const cfg=config('cancel-init','r1');await manager.reconcile([cfg]);const controller=new AbortController();
+  const pending=manager.withRuntime(cfg,controller.signal,async()=>assert.fail('cancelled call must not run'));
+  await delay(10);controller.abort(new DOMException('superseded','AbortError'));
+  await assert.rejects(pending,/superseded|abort/i);assert.equal(initSignal.aborted,true);
+  releaseInit();await delay(20);
+  assert.equal(creates,1);assert.deepEqual(manager.snapshot(),[]);assert.deepEqual(destroyed,['r1']);
+  await manager.destroy();
+});
+
+test('RuntimeManager one cancelled waiter does not abort another shared initialization waiter',async()=>{
+  let creates=0,initSignal;const destroyed=[];let releaseInit;
+  const gate=new Promise(resolve=>{releaseInit=resolve;});
+  const manager=new RuntimeManager({maxExecutable:2,idleMs:50,initWaitMs:500,isExecutable:()=>true,create:async(cfg,signal)=>{creates+=1;initSignal=signal;await gate;return mockAdapter(cfg.configRevision,destroyed);}});
+  const cfg=config('shared-init','r1');await manager.reconcile([cfg]);const controller=new AbortController();
+  const cancelled=manager.withRuntime(cfg,controller.signal,async()=>assert.fail('cancelled call must not run'));
+  const retained=manager.withRuntime(cfg,undefined,async()=>42);
+  await delay(10);controller.abort();await assert.rejects(cancelled,{name:'AbortError'});
+  assert.equal(initSignal.aborted,false);releaseInit();assert.equal(await retained,42);
+  assert.equal(creates,1);assert.equal(manager.snapshot().length,1);assert.deepEqual(destroyed,[]);
+  await manager.destroy();
+});
+
+test('RuntimeManager a new caller retries after a cancelled initialization has cleaned up',async()=>{
   let creates=0;const destroyed=[];let releaseInit;
   const gate=new Promise(resolve=>{releaseInit=resolve;});
-  const manager=new RuntimeManager({maxExecutable:2,idleMs:50,initWaitMs:500,isExecutable:()=>true,create:async cfg=>{creates+=1;await gate;return mockAdapter(cfg.configRevision,destroyed);}});
-  const cfg=config('cancel-init','r1');await manager.reconcile([cfg]);const controller=new AbortController();
-  const pending=manager.withRuntime(cfg,controller.signal,async()=>true);await delay(10);controller.abort(new DOMException('superseded','AbortError'));
-  await assert.rejects(()=>pending,/superseded|abort/i);releaseInit();await delay(20);
-  assert.equal(creates,1);assert.equal(manager.snapshot()[0]?.inFlightCount,0);
+  const manager=new RuntimeManager({maxExecutable:2,idleMs:50,isExecutable:()=>true,create:async cfg=>{creates+=1;if(creates===1)await gate;return mockAdapter(cfg.configRevision,destroyed);}});
+  const cfg=config('retry-init','r1');await manager.reconcile([cfg]);const controller=new AbortController();
+  const cancelled=manager.withRuntime(cfg,controller.signal,async()=>false);
+  await delay(10);controller.abort();await assert.rejects(cancelled,{name:'AbortError'});
+  const retried=manager.withRuntime(cfg,undefined,async()=>true);releaseInit();
+  assert.equal(await retried,true);assert.equal(creates,2);assert.deepEqual(destroyed,['r1']);
   await manager.destroy();
 });
 

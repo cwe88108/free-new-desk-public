@@ -1,6 +1,6 @@
 {
   "name": "free-new-desk-public",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": false,
   "description": "Windows 11 x64 desktop media platform with TVBox/FongMi-compatible source architecture.",
   "type": "module",
@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build:desktop",
+    "benchmark:compare": "node scripts/compare-performance.mjs",
     "build:packages": "npm run build -w @free-new-desk/contracts && npm run build -w @free-new-desk/source-sdk && npm run build -w @free-new-desk/plugin-sdk && npm run build -w @free-new-desk/source-adapters && npm run build -w @free-new-desk/catvod-runtime-shim && npm run build -w @free-new-desk/tvbox-config && npm run build -w @free-new-desk/live-parser && npm run build -w @free-new-desk/epg-parser && npm run build -w @free-new-desk/data-service && npm run build -w @free-new-desk/proxy-service && npm run build -w @free-new-desk/spider-worker && npm run build -w @free-new-desk/plugin-host && npm run build -w @free-new-desk/jvm-spider-host && npm run build -w @free-new-desk/drpy2-worker && npm run build -w @free-new-desk/source-engine",
     "build:desktop": "npm run build -w @free-new-desk/desktop",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
@@ -45,12 +46,12 @@
     "pinia": "3.0.3",
     "vue": "3.5.43",
     "vue-router": "4.5.1",
-    "zod": "3.25.76"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
     "@vitejs/plugin-vue": "6.0.9",
-    "electron": "44.7.0",
+    "electron": "44.9.1",
     "electron-builder": "26.15.3",
     "typescript": "5.9.2",
     "vite": "7.3.7",
@@ -116,6 +117,10 @@
           "libmpv-2.dll",
           "SOURCE.txt"
         ]
+      },
+      {
+        "from": "dist/player-public-roots.pem",
+        "to": "native/player-host/player-public-roots.pem"
       },
       {
         "from": "services/jvm-spider-host/dist/jvm-spider-host.jar",

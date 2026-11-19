@@ -18,7 +18,7 @@ async function stage(result,name,fn,{required=true}={}){
 function missing(result,name,message,required=true){result.stages.push({stage:name,ok:false,required,durationMs:0,message});}
 for(const key of keys){
  const row=rows.find(item=>item.key===key);if(!row){results.push({key,classification:'missing-fixture',sourceInterfaceOk:false,playerValidated:false,stages:[]});continue;}
- const engine=new SourceEngine();engine.configureRuntime({engineStoreDir});
+ const engine=new SourceEngine();engine.configureRuntime({engineStoreDir:engineStore});
  const config={id:row.key,name:row.name,kind:'T3_JS',endpoint:row.api,ext:row.ext??undefined,enabled:true,trust:'B',searchable:row.searchable,configRevision:'v1415-audit-fixed'};
  const result={key,name:row.name,api:row.api,startedAt:new Date().toISOString(),evidenceScope:'source-interface',playerValidated:false,stages:[]};const started=Date.now();
  try{

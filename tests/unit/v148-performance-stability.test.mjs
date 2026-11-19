@@ -1,8 +1,26 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
+import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import ts from 'typescript';
 const text=path=>readFile(new URL('../../'+path,import.meta.url),'utf8');
-test('v1.4.8 source bulk controls and compatibility actions are present',async()=>{const s=await text('apps/desktop/src/renderer/views/SourcesView.vue');assert.match(s,/启用兼容来源/);assert.match(s,/停止不兼容来源/);assert.match(s,/source\.setEnabledBulk/);assert.match(s,/health\.value\.filter\(item=>item\.ok===compatible\)/);});
+
+// Parse the method, rather than stopping at the first nested block's closing brace.
+function assertAwaitedReplacement(client){
+  const file=ts.createSourceFile('source-engine-client.ts',client,ts.ScriptTarget.Latest,true);
+  const declaration=file.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==='SourceEngineClient');
+  const method=declaration?.members.find(node=>ts.isMethodDeclaration(node)&&node.name.getText(file)==='replaceAll');
+  assert.ok(method?.modifiers?.some(item=>item.kind===ts.SyntaxKind.AsyncKeyword),'replaceAll must be async');
+  assert.ok(method?.body?.statements.some(statement=>{
+    if(!ts.isExpressionStatement(statement)||!ts.isAwaitExpression(statement.expression))return false;
+    const call=statement.expression.expression;
+    return ts.isCallExpression(call)&&ts.isPropertyAccessExpression(call.expression)&&call.expression.expression.kind===ts.SyntaxKind.ThisKeyword&&call.expression.name.getText(file)==='#result';
+  }),'replaceAll must await the worker response at method scope');
+}
+test('replacement consistency guard permits nested snapshots but rejects fire-and-forget or unrelated awaits',()=>{
+  const method=body=>`class SourceEngineClient { async replaceAll(sources:SourceConfig[]):Promise<void>{${body}} }`;
+  assert.doesNotThrow(()=>assertAwaitedReplacement(method('if(true){this.sources=sources;}await this.#result({});')));
+  for(const body of ['void this.#result({});','await this.other();','void (async()=>{await this.#result({});})();'])assert.throws(()=>assertAwaitedReplacement(method(body)),/must await the worker response/);
+});
+test('v1.4.8 source bulk controls and compatibility actions are present',async()=>{const s=await text('apps/desktop/src/renderer/views/SourcesView.vue');assert.match(s,/启用检查通过来源/);assert.match(s,/停止检查失败来源/);assert.match(s,/source\.setEnabledBulk/);assert.match(s,/health\.value\.filter\(item=>item\.ok===compatible\)/);});
 test('v1.4.8 navigation places Player between Live and Search',async()=>{const s=await text('apps/desktop/src/renderer/App.vue');assert.ok(s.indexOf("path:'/live'")<s.indexOf("path:'/player'"));assert.ok(s.indexOf("path:'/player'")<s.indexOf("path:'/search'"));});
-test('v1.4.8 source engine keeps strong consistency while bulk IPC performs one sync',async()=>{const client=await text('apps/desktop/src/main/source-engine-client.ts');const main=await text('apps/desktop/src/main/index.ts');assert.doesNotMatch(client,/#replacePending|#flushReplaceAll/);assert.match(client,/async replaceAll\(sources:SourceConfig\[\]\):Promise<void>\{[^}]*await this\.#result/);const handler=main.match(/source:setEnabledBulk[\s\S]*?source:remove/)?.[0]??'';assert.equal((handler.match(/syncSources\(\)/g)??[]).length,1);});
+test('v1.4.8 source engine keeps strong consistency while bulk IPC performs one sync',async()=>{const client=await text('apps/desktop/src/main/source-engine-client.ts');const main=await text('apps/desktop/src/main/index.ts');assert.doesNotMatch(client,/#replacePending|#flushReplaceAll/);assertAwaitedReplacement(client);const handler=main.match(/source:setEnabledBulk[\s\S]*?source:remove/)?.[0]??'';assert.equal((handler.match(/syncSources\(\)/g)??[]).length,1);});
 // Intent dispatch now precedes navigation so an old router wait cannot steal playback.
 // playback-dispatch-order.test.mjs also proves navigation proceeds with media opening unresolved.
 test('playback pages keep navigation independent of slow media opening',async()=>{for(const p of ['apps/desktop/src/renderer/views/VodView.vue','apps/desktop/src/renderer/views/SearchView.vue']){const s=await text(p);assert.ok(s.includes("await router.push('/player')"),`missing Player navigation in ${p}`);assert.match(s,/void window\.desktop\.(playback|live)\.play/);assert.doesNotMatch(s,/await window\.desktop\.(playback|live)\.play/);assert.match(s,/emitPlaybackStage/);}});
@@ -10,7 +28,7 @@ test('v1.4.8 native surface uses owner and generation guards',async()=>{const s=
 test('v1.4.10 PlayerClient lets the newest load win while commands and queries stay direct',async()=>{const s=await text('apps/desktop/src/main/player-client.ts');assert.match(s,/#loadGeneration/);assert.match(s,/PlaybackSupersededError/);assert.match(s,/#assertCurrent/);assert.doesNotMatch(s,/#loadQueueTail|#enqueueLoad/);const command=s.match(/async command[\s\S]*?\n  }/)?.[0]??'';const query=s.match(/async query\(query:PlayerQuery\)[\s\S]*?\n  }/)?.[0]??'';assert.doesNotMatch(command,/#waitForLoad|#assertCurrent/);assert.doesNotMatch(query,/#waitForLoad|#assertCurrent/);});
 test('v1.4.8 native pipe handler is not globally locked during load',async()=>{const s=await text('native/player-host/src/named_pipe_server.cpp');assert.doesNotMatch(s,/lock\(handlerMutex_/);});
 test('search aggregation is cancellable health-ranked and success-only in result groups',async()=>{const [view,main]=await Promise.all([text('apps/desktop/src/renderer/views/SearchView.vue'),text('apps/desktop/src/main/index.ts')]);assert.match(view,/window\.desktop\.source\.aggregateSearch\(term\)/);assert.match(view,/cancelAggregateSearch/);assert.match(view,/values\.filter\(item=>item\.items\.length>0\)/);assert.match(view,/searchCompleted/);assert.match(view,/failedOutcomes/);assert.match(main,/AggregateSearchStatus='success'\|'empty'\|'failed'\|'timeout'\|'canceled'/);assert.match(main,/aggregateController\?\.abort/);assert.match(main,/rank\(a\.id\)-rank\(b\.id\)\|\|latency\(a\.id\)-latency\(b\.id\)/);});
-test('v1.4.11 packaged UI smoke checks Music and Player before Search and new source controls',async()=>{const s=await text('apps/desktop/src/renderer/main.ts');assert.match(s,/live','music','player','search/);assert.match(s,/停止不兼容来源/);});
+test('v1.4.11 packaged UI smoke checks Music and Player before Search and new source controls',async()=>{const s=await text('apps/desktop/src/renderer/main.ts');assert.match(s,/live','music','player','search/);assert.match(s,/停止检查失败来源/);});
 test('v1.4.8 bulk endpoint uses one sqlite transaction and one Source Engine sync',async()=>{const data=await text('services/data-service/src/index.ts');const main=await text('apps/desktop/src/main/index.ts');assert.match(data,/setSourcesEnabledBulk/);assert.match(data,/BEGIN IMMEDIATE/);assert.match(main,/source:setEnabledBulk/);const handler=main.match(/source:setEnabledBulk[\s\S]*?source:remove/)?.[0]??'';assert.equal((handler.match(/syncSources\(\)/g)??[]).length,1);});
 
 test('v1.4.8 uses VOD and LIVE mpv cache profiles',async()=>{const contracts=await text('packages/contracts/src/index.ts');const native=await text('native/player-host/src/main.cpp');const main=await text('apps/desktop/src/main/index.ts');assert.match(contracts,/profile:z\.enum\(\['vod','live','music'\]\)/);assert.match(native,/demuxer-readahead-secs/);assert.match(native,/cache-pause-wait/);assert.match(main,/profile:'vod'/);assert.match(main,/profile:'live'/);});

@@ -1,10 +1,12 @@
 provider: zhongfly/mpv-winbuild
-tag: 2026-10-04-c152964208
-mpv commit: c1529642089bfebfc928a1c1664638a7a5d219ba
-asset: mpv-dev-lgpl-x86_64-20261004-git-c152964208.7z
-source: https://github.com/zhongfly/mpv-winbuild/releases/download/2026-10-04-c152964208/mpv-dev-lgpl-x86_64-20261004-git-c152964208.7z
-archive sha256: b656b1d3f18f3db619894c22b68023acabd856e9e026b2a8516f30f1a44ee0bc
-dll sha256: ee7dde89da6ddecb2adf7fc7585d4d89124dfaa2e1b476393a04c06ab7b02ad6
+tag: 2026-11-03-8ca245f213
+mpv commit: 8ca245f2133773f9a7fe59e4c5bcc53f1af4407c
+asset: mpv-dev-lgpl-x86_64-20261103-git-8ca245f213.7z
+source: https://github.com/zhongfly/mpv-winbuild/releases/download/2026-11-03-8ca245f213/mpv-dev-lgpl-x86_64-20261103-git-8ca245f213.7z
+archive sha256: 8a39770639ec9c3a391cfa45406bf82b69c964364ce538441287d13793b2f6a6
+dll sha256: f4509608a1161c654ec7cc1da740df02ae665451e5ed1311e7876f0e721c98a2
 upstream mpv: https://github.com/mpv-player/mpv
 build declaration: mpv-dev-lgpl (libmpv LGPLv2.1+, FFmpeg LGPLv3 as declared by provider)
 notes: dynamically loaded by PlayerHost; retain upstream/provider license notices when redistributing.
+vendored archive: mpv-dev-lgpl-x86_64-20261103-git-8ca245f213.7z
+build evidence: https://github.com/zhongfly/mpv-winbuild/actions/runs/41615657033

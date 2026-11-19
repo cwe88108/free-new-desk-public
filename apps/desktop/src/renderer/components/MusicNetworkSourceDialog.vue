@@ -2,29 +2,41 @@
 import { computed,ref,watch } from 'vue';
 import type { MusicSource } from '@free-new-desk/contracts';
 import AppIcon from './AppIcon.vue';
-const props=defineProps<{open:boolean}>();const emit=defineEmits<{close:[];saved:[source:MusicSource,count:number]}>();
-const kind=ref<'webdav'|'smb'>('webdav'),name=ref(''),root=ref(''),username=ref(''),password=ref(''),rememberCredential=ref(true),saving=ref(false),error=ref('');
+const props=defineProps<{open:boolean;source?:MusicSource|undefined}>();const emit=defineEmits<{close:[];saved:[source:MusicSource,count:number]}>();
+const kind=ref<'webdav'|'smb'>(props.source?.kind==='smb'?'smb':'webdav'),name=ref(props.source?.name??''),root=ref(props.source?.root??''),username=ref(''),password=ref(''),rememberCredential=ref(props.source?Boolean(props.source.credentialRef):true),saving=ref(false),error=ref('');
 const rootPlaceholder=computed(()=>kind.value==='webdav'?'https://example.com/dav/music/':'\\\\NAS\\Music');
 watch(()=>props.open,value=>{if(value){error.value='';password.value='';}});
 function close(){if(!saving.value)emit('close');}
 function messageOf(value:unknown){return(value instanceof Error?value.message:String(value)).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'');}
 async function resolveConflict(){let retry=false;saving.value=true;try{const result=await window.desktop.music.resolveSmbConflict(root.value);error.value=result.message;retry=result.ok;}catch(value){error.value=messageOf(value);}finally{saving.value=false;}if(retry)await save();}
 async function useExisting(){username.value='';password.value='';rememberCredential.value=false;await save();}
-async function save(){const safeName=name.value.trim(),safeRoot=root.value.trim();if(!safeName||!safeRoot){error.value='请填写来源名称和地址。';return;}saving.value=true;error.value='';try{const result=await window.desktop.music.addNetworkSource({kind:kind.value,name:safeName,root:safeRoot,...(username.value.trim()?{username:username.value.trim()}:{}),...(password.value?{password:password.value}:{}),rememberCredential:rememberCredential.value});emit('saved',result.source,result.count);name.value='';root.value='';username.value='';password.value='';}catch(value){error.value=messageOf(value);}finally{saving.value=false;}}
+async function save(){
+  if(saving.value)return;
+  const safeName=name.value.trim(),safeRoot=root.value.trim();
+  if(!safeName||!safeRoot){error.value='请填写来源名称和地址。';return;}
+  saving.value=true;error.value='';
+  try{
+    const credentials={...(username.value.trim()?{username:username.value.trim()}:{}),...(password.value?{password:password.value}:{}),rememberCredential:rememberCredential.value};
+    const result=props.source?await window.desktop.music.updateCredentials({sourceId:props.source.id,...credentials}):
+      await window.desktop.music.addNetworkSource({kind:kind.value,name:safeName,root:safeRoot,...credentials});
+    emit('saved',result.source,result.count);username.value='';password.value='';
+  }catch(value){error.value=messageOf(value);}finally{saving.value=false;}
+}
 </script>
 
 <template>
   <dialog :open="open" class="music-source-dialog" @cancel.prevent="close"><form method="dialog" @submit.prevent="save">
-    <header><div><small>网络音乐来源</small><h2>添加 WebDAV / SMB</h2></div><button type="button" aria-label="关闭" @click="close"><AppIcon name="action-close" :size="16"/></button></header>
-    <label>类型<select v-model="kind"><option value="webdav">WebDAV</option><option value="smb">SMB / Windows 共享</option></select></label>
-    <label>来源名称<input v-model="name" maxlength="80" autocomplete="off" placeholder="例如：家庭音乐库"/></label>
-    <label>{{kind==='webdav'?'WebDAV 地址':'SMB UNC 路径'}}<input v-model="root" autocomplete="off" :placeholder="rootPlaceholder"/></label>
+    <header><div><small>网络音乐来源</small><h2>{{source?'更新凭据':'添加 WebDAV / SMB'}}</h2></div><button type="button" aria-label="关闭" @click="close"><AppIcon name="action-close" :size="16"/></button></header>
+    <label>类型<select v-model="kind" :disabled="!!source"><option value="webdav">WebDAV</option><option value="smb">SMB / Windows 共享</option></select></label>
+    <label>来源名称<input v-model="name" :readonly="!!source" maxlength="80" autocomplete="off" placeholder="例如：家庭音乐库"/></label>
+    <label>{{kind==='webdav'?'WebDAV 地址':'SMB UNC 路径'}}<input v-model="root" :readonly="!!source" autocomplete="off" :placeholder="rootPlaceholder"/></label>
     <div class="two"><label>用户名<input v-model="username" autocomplete="username" placeholder="可选"/></label><label>密码<input v-model="password" type="password" autocomplete="current-password" placeholder="可选"/></label></div>
     <label class="remember"><input v-model="rememberCredential" type="checkbox"/>使用 Windows 安全存储加密保存凭据</label>
-    <p class="hint">填写 NAS 共享地址及有访问权限的账号；支持 \\NAS\Music、\NAS\Music 和 smb://NAS/Music。如 Windows 已用其他账号连接同一 NAS，会明确提示凭据冲突，可选择复用现有会话或确认断开后自动重试。密码只通过受限管道传给 Windows 网络 API，不进入命令行或播放 URL。</p>
+    <p v-if="kind==='smb'" class="hint">填写 NAS 共享地址及有访问权限的账号；支持 \\NAS\Music、\NAS\Music 和 smb://NAS/Music。如 Windows 已用其他账号连接同一 NAS，会明确提示凭据冲突，可选择复用现有会话或确认断开后自动重试。密码只通过受限管道传给 Windows 网络 API，不进入命令行或播放 URL。</p>
+    <p v-else-if="source" class="hint">用户名和密码都留空时，将清除已保存的凭据并尝试匿名扫描。</p>
     <p v-if="error" class="error" role="alert">{{error}}</p>
     <div v-if="kind==='smb'&&(error.includes('SMB_CREDENTIAL_CONFLICT')||error.includes('1219'))" class="two conflict-actions"><button type="button" :disabled="saving" @click="useExisting">使用现有 Windows 会话</button><button type="button" :disabled="saving" @click="resolveConflict">查看并处理冲突连接</button></div>
-    <footer><button type="button" class="secondary-button" :disabled="saving" @click="close">取消</button><button class="accent-button" :disabled="saving" type="submit">{{saving?'正在添加…':'添加并后台扫描'}}</button></footer>
+    <footer><button type="button" class="secondary-button" :disabled="saving" @click="close">取消</button><button class="accent-button" :disabled="saving" type="submit">{{saving?'正在保存…':source?'更新并扫描':'添加并后台扫描'}}</button></footer>
   </form></dialog>
 </template>
 <style scoped>

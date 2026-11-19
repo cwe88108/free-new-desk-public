@@ -9,12 +9,13 @@ import { PlaybackSessionController,PlaybackSupersededError as SessionSupersededE
 import {resolveLivePlaybackTarget} from './live-playback-target.js';
 
 type PlayerParams=Record<string,unknown>;
+export type PlayerLoadTrace={stage:'ready'|'round-trip';phase:'start'|'success'|'failure';attempt:number;generation:number;elapsedMs:number};
 type CommandResult={ok:boolean;detail?:string};
 type LoadAccepted=CommandResult&{accepted?:boolean;loadId?:string;hostEpoch?:string};
 export type PlayerRuntimeSession=PlaybackSessionSnapshot;
 export interface PlayerLoadContext{
   requestId?:string;initiator?:PlaybackInitiator;sourceId?:string;channelId?:string;routeIndex?:number;routeCount?:number;
-  videoId?:string;episodeId?:string;trackId?:string;queueItemId?:string;
+  videoId?:string;episodeId?:string;trackId?:string;queueItemId?:string;deferLiveFailure?:boolean;
 }
 const browserUserAgent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
 const compatibilityUserAgents=['okhttp/3.15','bingcha/1.1 (mianfeifenxiang) ','Goiptv/8.8.8'];
@@ -36,6 +37,7 @@ export function getCurrentPlayerClient():PlayerClient|undefined{return currentPl
 export function getPlayerRuntimeSession():PlayerRuntimeSession{return runtimeController.current();}
 export function onPlayerRuntimeSession(listener:(session:PlayerRuntimeSession)=>void):()=>void{runtimeListeners.add(listener);listener(runtimeController.current());return()=>runtimeListeners.delete(listener);}
 export function beginPlayerRuntimeSession(domain:PlaybackDomain,meta:Partial<PlaybackSessionSnapshot>={},initiator:PlaybackInitiator='user',parent?:PlaybackSessionSnapshot):PlayerRuntimeSession{return runtimeController.begin(domain,meta,initiator,parent);}
+export function bindPlayerRuntimeHistory(requestId:string,historyId:string):PlayerRuntimeSession|undefined{return runtimeController.bindHistory(requestId,historyId);}
 export function patchPlayerRuntimeSession(requestId:string,patch:Partial<PlaybackSessionSnapshot>):PlayerRuntimeSession|undefined{if(!runtimeController.isMutable(requestId))return;return runtimeController.patch(requestId,patch);}
 export function failPlayerRuntimeSession(requestId:string,error:string):PlayerRuntimeSession|undefined{return runtimeController.fail(requestId,error);}
 export function endPlayerRuntimeSession(requestId:string,reason:'eof'|'stop'|'replaced'|'failed'|'unknown'='unknown'):PlayerRuntimeSession|undefined{if(!runtimeController.isCurrent(requestId))return;return runtimeController.end(reason);}
@@ -61,7 +63,13 @@ export class PlayerClient{
   #statsInFlight:{requestId:string;loadId?:string;promise:Promise<PlayerStats>}|undefined;
   #lastStats:PlayerStats|undefined;
 
-  constructor(private readonly recordMetric:(metric:string,value:number)=>void=()=>{}){currentPlayerClient=this;}
+  constructor(private readonly recordMetric:(metric:string,value:number)=>void=()=>{},private readonly recordLoadTrace:(trace:PlayerLoadTrace)=>void=()=>{},private readonly recordCounter:(counter:string)=>void=()=>{}){currentPlayerClient=this;}
+
+  // Prepare the transport without requesting invalid idle stats or changing a media session.
+  async prewarm():Promise<void>{
+    if(process.platform!=='win32')return;
+    await this.#ensureStarted();
+  }
 
   #resetStatsCache():void{this.#statsInFlight=undefined;this.#lastStats=undefined;this.#lastStatsAt=0;this.#statsState='pending';}
   #resetTransportFaults():void{this.#transportFaultEpoch='';this.#transportFaultStreak=0;this.#lastTransportFaultAt=0;}
@@ -81,6 +89,7 @@ export class PlayerClient{
   async load(request:PlayRequest,onAccepted?:(loadId:string)=>void,context:PlayerLoadContext={}):Promise<CommandResult>{
     if(process.platform!=='win32')return{ok:false,detail:'Native PlayerHost is Windows-only'};
     const domain:PlaybackDomain|null=request.profile==='vod'||request.profile==='live'||request.profile==='music'?request.profile:null;
+    const deferLiveFailure=domain==='live'&&context.deferLiveFailure===true;
     let requestId='';
     if(domain){
       if(context.requestId){assertPlayerRuntimeCurrent(context.requestId,domain);requestId=context.requestId;patchPlayerRuntimeSession(requestId,runtimeMeta(context));}
@@ -133,11 +142,11 @@ export class PlayerClient{
       }catch(error){
         if(generation!==this.#loadGeneration)error=new PlaybackSupersededError();
         if(error instanceof PlaybackSupersededError||error instanceof SessionSupersededError){this.recordMetric('cancelledPlaybackRequestCount',1);return{ok:false,detail:error.message};}
-        if(requestId)runtimeController.fail(requestId,error instanceof Error?error.message:String(error));
+        if(requestId&&!deferLiveFailure)runtimeController.fail(requestId,error instanceof Error?error.message:String(error));
         throw error;
       }
     }
-    if(requestId)runtimeController.fail(requestId,lastError instanceof Error?lastError.message:String(lastError??'PlayerHost failed to load media'));
+    if(requestId&&!deferLiveFailure)runtimeController.fail(requestId,lastError instanceof Error?lastError.message:String(lastError??'PlayerHost failed to load media'));
     throw lastError instanceof Error?lastError:new Error('PlayerHost failed to load media');
   }
 
@@ -148,7 +157,8 @@ export class PlayerClient{
     if(command.command==='pause'&&before.requestId)runtimeController.requestPause(before.requestId,command.value);
     if(command.command==='stop'){this.#liveTargetController?.abort();this.#loadGeneration+=1;this.#resetStatsCache();this.#resetTransportFaults();if(before.requestId)runtimeController.end('stop');}
     const pauseRevision=command.command==='pause'?++this.#pauseRevision:this.#pauseRevision;
-    const payload={...command,sessionGeneration:before.generation,...(before.loadId?{loadId:before.loadId}:{}),...(command.command==='pause'?{pauseRevision:runtimeController.current().controlRevision??0}:{})};
+    // Stop fences the whole session, including a replacement whose native ACK is still pending.
+    const payload={...command,sessionGeneration:before.generation,...(command.command==='stop'?{loadId:undefined}:before.loadId?{loadId:before.loadId}:{}),...(command.command==='pause'?{pauseRevision:runtimeController.current().controlRevision??0}:{})};
     const expectedId=runtimeController.isMutable(before.requestId)||command.command==='stop'?before.requestId:'';
     const result=await this.#sendWithRecovery('player.command',payload as unknown as PlayerParams,this.#loadGeneration,expectedId,before.domain??undefined,command.command==='stop') as CommandResult&{seekRevision?:number};
     if(command.command==='seek'&&before.loadId===runtimeController.current().loadId&&result.ok)this.#seekRevision=result.seekRevision??this.#seekRevision;
@@ -174,9 +184,16 @@ export class PlayerClient{
   async #queryOnce(query:PlayerQuery):Promise<PlayerStats|PlayerTrack[]|PlayerLoadStatus>{
     if(process.platform!=='win32')throw new Error('Native PlayerHost is Windows-only');
     const requestedSession=runtimeController.current();
-    let result=await this.#sendWithRecovery('player.query',{query}) as PlayerStats|PlayerTrack[]|PlayerLoadStatus;
+    const metric=query==='stats'?'playerHostStatsQuery':query==='load-status'?'playerHostLoadStatusQuery':'playerHostTracksQuery';
+    this.recordCounter(metric+'Calls');
+    const queryStarted=performance.now();
+    let result:PlayerStats|PlayerTrack[]|PlayerLoadStatus;
+    try{result=await this.#sendWithRecovery('player.query',{query}) as PlayerStats|PlayerTrack[]|PlayerLoadStatus;}
+    catch(error){this.recordCounter(metric+'Errors');throw error;}
+    finally{this.recordMetric(metric+'Ms',performance.now()-queryStarted);}
+    const responseSession=runtimeController.current();
+    if(requestedSession.requestId!==responseSession.requestId||requestedSession.loadId!==responseSession.loadId)throw new PlaybackSupersededError();
     if(query==='tracks')return result;
-    if(requestedSession.requestId!==runtimeController.current().requestId)throw new PlaybackSupersededError();
     if(query==='load-status'&&result&&typeof result==='object'&&!Array.isArray(result)){
       const state=result as PlayerLoadStatus,current=runtimeController.current();
       if(current.loadId&&state.loadId===current.loadId&&current.domain!=='live'){
@@ -187,7 +204,7 @@ export class PlayerClient{
     const current=runtimeController.current();
     if(query==='stats'){
       const sample=result as PlayerStats;
-      const isCurrentSample=Boolean(sample.sampleValid&&sample.hostEpoch&&sample.hostEpoch===this.#acceptedEpoch&&sample.loadId===current.loadId&&Number.isSafeInteger(sample.sampleSeq)&&(sample.sampleSeq??0)>this.#sampleSeq&&(sample.seekRevision??0)>=this.#seekRevision);
+      const isCurrentSample=Boolean(current.loadId&&sample.sampleValid&&sample.hostEpoch&&sample.hostEpoch===this.#acceptedEpoch&&sample.loadId===current.loadId&&Number.isSafeInteger(sample.sampleSeq)&&(sample.sampleSeq??0)>this.#sampleSeq&&(sample.seekRevision??0)>=this.#seekRevision);
       if(isCurrentSample){
         this.#sampleSeq=sample.sampleSeq!;
         this.#lastStatsAt=performance.now();
@@ -199,11 +216,6 @@ export class PlayerClient{
         const cached=this.#lastStats,age=Math.max(0,performance.now()-this.#lastStatsAt);
         if(!cached||cached.hostEpoch!==this.#acceptedEpoch||cached.loadId!==current.loadId||(cached.seekRevision??0)<this.#seekRevision){
           this.#statsState='pending';
-          const pendingDisplay=sample as PlayerStats;
-          if(Number.isFinite(pendingDisplay.duration)&&pendingDisplay.duration>0&&Number.isFinite(pendingDisplay.position)&&pendingDisplay.position>=0){
-            this.recordMetric('playerStatsPendingDisplayCount',1);
-            return {...pendingDisplay,sampleFresh:false,sampleAgeMs:0,sampleState:'pending' as const,domain:current.domain,requestId:current.requestId,sessionGeneration:current.generation,sessionStatus:current.status,...(current.loadId?{sessionLoadId:current.loadId}:{})} as PlayerStats;
-          }
           throw new Error('[PLAYBACK_STATS_PENDING] 等待当前会话有效采样');
         }
         if(age>STATS_HARD_EXPIRY_MS){if(this.#statsState!=='unavailable')this.recordMetric('playerStatsUnavailableCount',1);this.#statsState='unavailable';throw new Error('[PLAYBACK_STATS_UNAVAILABLE] 当前会话统计已超过 15 秒，不能用于播放或恢复决策');}
@@ -245,6 +257,15 @@ export class PlayerClient{
     this.#pipeName='';
   }
 
+  async #loadStage<T>(stage:'ready'|'round-trip',attempt:number,operation:()=>Promise<T>):Promise<T>{
+    const started=performance.now(),generation=this.#loadGeneration;
+    const trace=(phase:PlayerLoadTrace['phase'])=>{try{this.recordLoadTrace({stage,phase,attempt,generation,elapsedMs:performance.now()-started});}catch{/* Diagnostics must never change playback outcome. */}};
+    trace('start');
+    try{const result=await operation();trace('success');return result;}
+    catch(error){trace('failure');throw error;}
+    finally{this.recordMetric(stage==='ready'?'playerLoadReadyWaitMs':'playerLoadRoundTripMs',performance.now()-started);}
+  }
+
   async #sendWithRecovery(method:string,params:PlayerParams,generation?:number,requestId='',domain?:PlaybackDomain,allowTerminal=false):Promise<unknown>{
     const expectedGeneration=generation??this.#loadGeneration;
     const session=runtimeController.current();
@@ -253,9 +274,11 @@ export class PlayerClient{
       assertCurrent();
       // A query/control must not silently recreate an empty host for an active media session.
       if(method!=='player.load'&&session.loadId&&runtimeController.isMutable(session.requestId)&&(!this.#process||this.#process.killed))throw new Error('PlayerHost exited during playback');
-      await this.#ensureStarted();
+      const readyStarted=performance.now();
+      if(method==='player.load')await this.#loadStage('ready',1,()=>this.#ensureStarted());else await this.#ensureStarted();
+      if(params.command==='window-sync')this.recordMetric('surfaceHostReadyWaitMs',performance.now()-readyStarted);
       assertCurrent();
-      const result=await this.#send(method,params);
+      const result=method==='player.load'?await this.#loadStage('round-trip',1,()=>this.#send(method,params)):await this.#send(method,params);
       assertCurrent();
       return result;
     }catch(first){
@@ -285,9 +308,9 @@ export class PlayerClient{
       }
       this.#stopTransportOnly();
       try{
-        await this.#ensureStarted();
+        await this.#loadStage('ready',2,()=>this.#ensureStarted());
         assertCurrent();
-        const result=await this.#send(method,params);
+        const result=await this.#loadStage('round-trip',2,()=>this.#send(method,params));
         assertCurrent();
         return result;
       }catch(second){
@@ -352,26 +375,36 @@ export class PlayerClient{
   #send(method:string,params:PlayerParams):Promise<unknown>{
     return new Promise((resolve,reject)=>{
       if(!this.#pipeName){reject(new Error('PlayerHost pipe is unavailable'));return;}
+      const transportStarted=performance.now(),surfaceCommand=params.command==='window-sync';
       const socket=net.createConnection(this.#pipeName);
       let buffer='';
       const timeoutMs=10_000;
-      const timer=setTimeout(()=>{socket.destroy();reject(new PlayerTransportTimeoutError(method,timeoutMs));},timeoutMs);
+      let transportRecorded=false;
+      const finishTiming=()=>{if(surfaceCommand&&!transportRecorded){transportRecorded=true;this.recordMetric('surfacePipeRoundTripMs',performance.now()-transportStarted);this.recordMetric('surfacePipePending',0);}};
+      if(surfaceCommand){this.recordMetric('surfaceCommandVisible',params.visible===false?0:1);this.recordMetric('surfacePipePending',1);}
+      const timer=setTimeout(()=>{finishTiming();socket.destroy();reject(new PlayerTransportTimeoutError(method,timeoutMs));},timeoutMs);
       socket.setEncoding('utf8');
-      socket.on('connect',()=>socket.write(`${JSON.stringify({id:randomUUID(),method,params})}\n`));
+      socket.on('connect',()=>{if(surfaceCommand)this.recordMetric('surfacePipeConnectMs',performance.now()-transportStarted);socket.write(`${JSON.stringify({id:randomUUID(),method,params})}\n`);});
       socket.on('data',chunk=>{
         buffer+=chunk;
         const newline=buffer.indexOf('\n');
         if(newline<0)return;
         clearTimeout(timer);
         const line=buffer.slice(0,newline);
-        socket.end();
+        // This RPC owns one response. Close both pipe directions immediately so a
+        // half-closed connection cannot keep one of the native listener slots busy.
+        socket.destroy();
         try{
-          const response=JSON.parse(line) as{result?:unknown;error?:{message?:string}};
+          const response=JSON.parse(line) as{result?:unknown;error?:{message?:string};surfaceTiming?:Record<string,unknown>};
+          if(surfaceCommand){
+            finishTiming();
+            for(const [field,metric]of Object.entries({commandLockMs:'surfaceNativeCommandLockMs',surfaceLockMs:'surfaceNativeSurfaceLockMs',applyMs:'surfaceNativeApplyMs',totalMs:'surfaceNativeTotalMs'})){const value=response.surfaceTiming?.[field];if(typeof value==='number'&&Number.isFinite(value)&&value>=0)this.recordMetric(metric,value);}
+          }
           if(response.error)reject(new PlayerRemoteError(response.error.message??'Player error'));
           else resolve(response.result);
-        }catch(error){reject(error instanceof Error?error:new Error(String(error)));}
+        }catch(error){finishTiming();reject(error instanceof Error?error:new Error(String(error)));}
       });
-      socket.on('error',error=>{clearTimeout(timer);const code=(error as NodeJS.ErrnoException).code??'UNKNOWN';reject(new PlayerTransportConnectionError(method,code,error.message));});
+      socket.on('error',error=>{finishTiming();clearTimeout(timer);const code=(error as NodeJS.ErrnoException).code??'UNKNOWN';reject(new PlayerTransportConnectionError(method,code,error.message));});
     });
   }
 }

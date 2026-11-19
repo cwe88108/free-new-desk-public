@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {DataService} from '../../services/data-service/dist/index.js';
 
 test('music migrations persist sources tracks and favorites through v16',()=>{
@@ -24,4 +25,29 @@ test('music lookup is not limited to the first 20000 tracks',()=>{
     const count=20_005,tracks=Array.from({length:count},(_,index)=>({id:`track-${index}`,sourceId:'large',path:`D:\\Music\\${index}.flac`,relativePath:`${index}.flac`,title:`Track ${String(index).padStart(5,'0')}`,artist:'Artist',album:'Album',format:'FLAC',favorite:false,available:true}));
     db.replaceMusicTracks('large',tracks);assert.equal(db.listMusicTracks('large',undefined,count).length,count);assert.equal(db.getMusicTrack('track-20004')?.title,'Track 20004');db.close();
   }finally{rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:50});}
+});
+
+test('network music credential replacement rolls back the new secret if the source update fails',()=>{
+  const dir=mkdtempSync(path.join(os.tmpdir(),'free-new-desk-music-credential-'));
+  const file=path.join(dir,'app.db');
+  const db=new DataService(file);
+  try{
+    const now=new Date().toISOString();
+    db.saveMusicSource({id:'fixture',name:'WebDAV fixture',kind:'webdav',root:'https://example.invalid/dav/',enabled:true,createdAt:now,updatedAt:now});
+    db.replaceMusicCredential('fixture',{ref:'old',encrypted:'old-ciphertext'});
+    const raw=new DatabaseSync(file);
+    try{raw.exec("CREATE TRIGGER reject_credential BEFORE UPDATE OF credential_ref ON music_sources BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END");}finally{raw.close();}
+    assert.throws(()=>db.replaceMusicCredential('fixture',{ref:'new',encrypted:'new-ciphertext'}),/fixture write failure/);
+    assert.equal(db.listMusicSources()[0].credentialRef,'old');
+    assert.equal(db.getSetting('music.credential.old'),'old-ciphertext');
+    assert.equal(db.getSetting('music.credential.new'),undefined);
+    const cleanup=new DatabaseSync(file);
+    try{cleanup.exec('DROP TRIGGER reject_credential');}finally{cleanup.close();}
+    db.replaceMusicCredential('fixture');
+    assert.equal(db.listMusicSources()[0].credentialRef,undefined);
+    assert.equal(db.getSetting('music.credential.old'),'');
+  }finally{
+    db.close();
+    rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:50});
+  }
 });

@@ -1,8 +1,9 @@
 import { app,protocol } from 'electron';
 import {join} from 'node:path';
+import {profileDirectory} from './distribution.js';
 
 // The public distribution must not read the private edition profile.
-if(!app.commandLine.hasSwitch('user-data-dir'))app.setPath('userData',join(app.getPath('appData'),'free-new-desk-public'));
+if(!app.commandLine.hasSwitch('user-data-dir'))app.setPath('userData',join(app.getPath('appData'),profileDirectory));
 
 // Do not import features that open the profile database until this process owns the lock.
 if(!app.requestSingleInstanceLock()){

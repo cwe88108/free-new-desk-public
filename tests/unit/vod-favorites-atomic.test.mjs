@@ -8,6 +8,7 @@ import ts from 'typescript';
 import {parse} from '@vue/compiler-sfc';
 import {DatabaseSync} from 'node:sqlite';
 import {DataService} from '../../services/data-service/dist/index.js';
+import {PLAYLIST_CLEANUP_KEY} from '../../apps/desktop/dist/main/playlist-cleanup.js';
 import {FAVORITES_MAX_BYTES,VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY} from '../../packages/contracts/dist/index.js';
 
 const favorite=(id,extra={})=>({sourceId:'source',sourceName:'Source',videoId:id,name:id,createdAt:'2026-10-19T00:00:00.000Z',...extra});
@@ -85,9 +86,9 @@ test('source removal cleans favorites in the same database transaction and prese
 test('generic settings IPC cannot bypass validated favorites or authorization mutations',async()=>{
   const source=ts.createSourceFile('index.ts',await readFile(new URL('../../apps/desktop/src/main/index.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);let handler,list;
   const find=node=>{if(ts.isCallExpression(node)&&node.arguments[0]&&ts.isStringLiteral(node.arguments[0])){if(node.arguments[0].text==='settings:set')handler=node.arguments[1].arguments[0];if(node.arguments[0].text==='settings:list')list=node.arguments[1];}ts.forEachChild(node,find);};find(source);assert.ok(handler);assert.ok(list);
-  const writes=[],context={GITHUB_UPDATE_CREDENTIAL_KEY:'update.credential.github',VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY,store:{setSetting:(...args)=>writes.push(args)},nativeTheme:{},cache:null,requireLocalSender:()=>{},publicUpdateSettings:()=>({theme:'light',[VOD_FAVORITES_KEY]:'large favorites',[VOD_FAVORITES_RECOVERY_KEY]:'raw backup'})};
+  const writes=[],context={GITHUB_UPDATE_CREDENTIAL_KEY:'update.credential.github',VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY,PLAYLIST_CLEANUP_KEY,store:{setSetting:(...args)=>writes.push(args)},nativeTheme:{},cache:null,requireLocalSender:()=>{},publicUpdateSettings:()=>({theme:'light',[VOD_FAVORITES_KEY]:'large favorites',[VOD_FAVORITES_RECOVERY_KEY]:'raw backup',[PLAYLIST_CLEANUP_KEY]:'[]'})};
   const output=ts.transpileModule('globalThis.handler='+handler.getText(source)+';globalThis.listHandler='+list.getText(source),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;vm.runInNewContext(output,context);
-  for(const key of [VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY,'update.credential.github'])assert.throws(()=>context.handler({key,value:'unvalidated'}),/专用入口/);
+  for(const key of [VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY,PLAYLIST_CLEANUP_KEY,'update.credential.github'])assert.throws(()=>context.handler({key,value:'unvalidated'}),/专用入口/);
   assert.equal(writes.length,0);assert.equal(context.handler({key:'theme',value:'light'}),true);assert.equal(writes.length,1);
   assert.deepEqual(Object.keys(context.listHandler({})),['theme'],'ordinary settings must not replicate favorites or raw recovery data to every page');
 });

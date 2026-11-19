@@ -1,3 +1,4 @@
+import './environment-proxy.js';
 import {managedResponse} from './managed-response.js';
 import {RequestContextStore,stripSensitiveRedirectHeaders,type RequestContextSpec} from './request-context-store.js';
 

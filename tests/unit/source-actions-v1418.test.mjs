@@ -9,6 +9,8 @@ const file=new URL('../../apps/desktop/src/renderer/views/SourcesView.vue',impor
 const code=parse(await readFile(file,'utf8')).descriptor.scriptSetup.content;
 const source=ts.createSourceFile('sources.ts',code,ts.ScriptTarget.Latest,true);
 function functions(names,context){
+  if(names.includes('reload'))names=[...names,'retainUnchangedRows'];
+  if(names.includes('visibleItems')){names=[...names,'matchesSource'];context.sourceSearch??={value:''};}
   context.reloadGeneration??=0;
   const nodes=source.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.includes(node.name?.text));
   assert.equal(nodes.length,names.length);
@@ -17,11 +19,73 @@ function functions(names,context){
 }
 const ref=value=>({value});
 
+test('delete preview distinguishes failed reads from verified zero counts',async()=>{
+  const ctx={error:ref(''),deleteDraft:ref(null),listVodFavorites:async()=>{throw new Error('unavailable');},window:{desktop:{history:{list:async()=>[]},live:{channels:async()=>{throw new Error('unavailable');},favorites:async()=>[{liveSourceId:'chosen'},{liveSourceId:'other'}]},reservation:{list:async()=>{throw new Error('unavailable');}},epg:{list:async()=>[]}}}};
+  const api=functions(['requestRemove','requestRemoveLive'],ctx);
+  await api.requestRemove({id:'chosen',name:'Chosen'});
+  assert.equal(ctx.deleteDraft.value.counts.find(x=>x.label==='关联收藏').count,null);
+  assert.equal(ctx.deleteDraft.value.counts.find(x=>x.label.includes('历史')).count,0);
+  await api.requestRemoveLive({id:'chosen',name:'Chosen',origin:'local-file'});
+  const counts=Object.fromEntries(ctx.deleteDraft.value.counts.map(x=>[x.label,x.count]));
+  assert.equal(counts['直播频道'],null);assert.equal(counts['直播收藏'],1);
+  assert.equal(counts['节目预约'],null);assert.equal(counts['EPG 节目单条目'],0);assert.equal(counts['托管的播放列表文件'],1);
+  const template=parse(await readFile(file,'utf8')).descriptor.template.content;
+  assert.match(template,/item.count\s*\?\?\s*'未能读取'/);
+});
+
+test('deletion of a source removed while its dialog was open has a clear error and sends no request',async()=>{
+  for(const kind of ['vod','live']){
+    let calls=0;
+    const ctx={error:ref(''),deleteDraft:ref({kind,id:'gone',name:'Gone',confirmText:'Gone'}),sources:ref([]),liveSources:ref([]),remove:async()=>{calls++;},removeLive:async()=>{calls++;}};
+    await functions(['deleteReady','confirmDelete'],ctx).confirmDelete();
+    assert.equal(calls,0);assert.match(ctx.error.value,/不存在或已经删除/);assert.equal(ctx.deleteDraft.value,null);
+  }
+});
+
+test('health stop stays clickable while a batch is active, even if sources disappear',async()=>{
+  const template=parse(await readFile(file,'utf8')).descriptor.template.content;
+  const button=template.match(/<button\b[^>]*@click="runBulkHealth"[^>]*>/)?.[0];
+  assert.ok(button);
+  const expression=button.match(/:disabled="([^"]+)"/)[1];
+  for(const sources of [[],[{enabled:true}]])assert.equal(vm.runInNewContext(expression,{bulkHealthBusy:true,sources}),false);
+  assert.equal(vm.runInNewContext(expression,{bulkHealthBusy:false,sources:[]}),true);
+});
+
+test('stopping a pending health batch suppresses later requests and preserves independent audit markers',async()=>{
+  for(const count of [1,2]){
+    let finish;const calls=[];
+    const ctx={sources:ref(Array.from({length:count},(_,i)=>({id:String(i),name:String(i),enabled:true}))),bulkHealthBusy:ref(false),bulkHealthProgress:ref(''),bulkHealthCancel:false,error:ref(''),importMessage:ref(''),audit:ref(null),health:ref([]),auditing:ref(new Set(['independent'])),window:{desktop:{source:{audit:id=>{calls.push(id);return new Promise(resolve=>{finish=resolve;});},health:async()=>[]}}}};
+    const {runBulkHealth}=functions(['runBulkHealth'],ctx);
+    const batch=runBulkHealth();assert.equal(ctx.bulkHealthBusy.value,true);
+    assert.equal(ctx.auditing.value.has('independent'),true);
+    await runBulkHealth();assert.match(ctx.bulkHealthProgress.value,/等待当前/);
+    finish({ok:true});await batch;
+    assert.deepEqual(calls,['0']);assert.match(ctx.bulkHealthProgress.value,/已取消/);
+    assert.equal(ctx.bulkHealthBusy.value,false);
+    assert.deepEqual([...ctx.auditing.value],['independent']);
+  }
+});
+
+test('health batch failure releases only its marker and continues remaining checks',async()=>{
+  const calls=[];
+  const ctx={sources:ref([{id:'a',name:'A',enabled:true},{id:'b',name:'B',enabled:true}]),bulkHealthBusy:ref(false),bulkHealthProgress:ref(''),bulkHealthCancel:false,error:ref(''),importMessage:ref(''),audit:ref(null),health:ref([]),auditing:ref(new Set(['independent'])),window:{desktop:{source:{audit:async id=>{calls.push(id);if(id==='a')throw new Error('controlled failure');return {ok:true};},health:async()=>[]}}}};
+  await functions(['runBulkHealth'],ctx).runBulkHealth();
+  assert.deepEqual(calls,['a','b']);assert.match(ctx.error.value,/controlled failure/);
+  assert.deepEqual([...ctx.auditing.value],['independent']);assert.equal(ctx.bulkHealthBusy.value,false);
+});
+
 test('source drag and keyboard ordering share persisted same-group moves and recover from save failure',async t=>{
   const db=new DataService(':memory:');t.after(()=>db.close());
   const items=[{id:'a',name:'A',kind:'T1_JSON'},{id:'b',name:'B',kind:'T1_JSON'},{id:'c',name:'C',kind:'T3_JS'}];
   let fail=false,writes=0;
   const ctx={sources:ref(items),sourceOrder:ref(['missing','a','a','b','c']),sourceOrderBusy:ref(false),draggedSourceId:ref(''),error:ref(''),importMessage:ref(''),computed:read=>({get value(){return read();}}),window:{desktop:{settings:{set:async(key,value)=>{writes++;if(fail)return false;db.setSetting(key,value);return true;}}}}};
+  let pagerFocused=false;
+  const pager={isConnected:true,focus:()=>{pagerFocused=true;}};
+  const rowButton={isConnected:false,closest:()=>({querySelector:()=>pager})};
+  const orderEvent={currentTarget:rowButton};
+  ctx.document={activeElement:rowButton,body:{}};
+  ctx.nextTick=async()=>{ctx.document.activeElement=ctx.document.body;};
+  ctx.vodSourcesHeading=ref(null);
   const api=functions(['groupKey','startSourceDrag','stepSource','moveSource'],ctx);
   const declarations=source.statements.flatMap(node=>ts.isVariableStatement(node)?[...node.declarationList.declarations]:[]).filter(node=>['groupMeta','sourceGroups'].includes(node.name.getText(source)));
   assert.equal(declarations.length,2);
@@ -30,12 +94,12 @@ test('source drag and keyboard ordering share persisted same-group moves and rec
   api.startSourceDrag(items[0],{dataTransfer:transfer});
   assert.equal(transfer.effectAllowed,'move');assert.deepEqual(payload,[['text/plain','a']]);
   await api.moveSource('b');assert.deepEqual(JSON.parse(db.getSetting('source.order')),['b','a','c']);assert.equal(ctx.draggedSourceId.value,'');
-  await api.stepSource(items[0],-1);assert.deepEqual(JSON.parse(db.getSetting('source.order')),['a','b','c']);
-  const before=writes;await api.stepSource(items[0],-1);assert.equal(writes,before);
+  await api.stepSource(items[0],-1,orderEvent);assert.deepEqual(JSON.parse(db.getSetting('source.order')),['a','b','c']);assert.equal(pagerFocused,true);
+  const before=writes;await api.stepSource(items[0],-1,orderEvent);assert.equal(writes,before);
   api.startSourceDrag(items[0],{dataTransfer:transfer});await api.moveSource('c');assert.equal(writes,before);
   fail=true;api.startSourceDrag(items[1],{dataTransfer:transfer});await api.moveSource('a');
   assert.deepEqual(JSON.parse(JSON.stringify(ctx.sourceOrder.value)),['a','b','c']);assert.match(ctx.error.value,/排序未确认保存/);assert.equal(ctx.sourceOrderBusy.value,false);
-  ctx.sourceOrderBusy.value=true;let prevented=false;api.startSourceDrag(items[0],{preventDefault:()=>{prevented=true;}});await api.stepSource(items[1],-1);assert.equal(prevented,true);assert.equal(writes,before+1);
+  ctx.sourceOrderBusy.value=true;let prevented=false;api.startSourceDrag(items[0],{preventDefault:()=>{prevented=true;}});await api.stepSource(items[1],-1,orderEvent);assert.equal(prevented,true);assert.equal(writes,before+1);
 });
 
 test('the global unhealthy filter applies to live groups and restores healthy and unchecked sources',()=>{
@@ -101,16 +165,53 @@ test('source buttons persist individual/bulk state, edits, ordering, and deletio
   await api.setLiveSources(false);assert.equal(db.listLiveSources()[0].enabled,false);
   db.saveSourceHealth({sourceId:'point',ok:true,score:100,latencyMs:1,checkedAt:new Date().toISOString()});await api.reload();
   await api.setCompatibilitySources(true,true,'启用兼容来源');assert.equal(db.listSources()[0].enabled,true);
-  await api.setCompatibilitySources(false,false,'停止不兼容来源');assert.match(ctx.importMessage.value,/没有已确认不兼容/);
+  await api.setCompatibilitySources(false,false,'停止不兼容来源');assert.match(ctx.importMessage.value,/没有检查失败/);
   api.openEdit(db.listSources()[0]);ctx.editDraft.name='Renamed';await api.saveEdit();assert.equal(db.listSources()[0].name,'Renamed');
   api.openEditLive(db.listLiveSources()[0]);ctx.editLiveDraft.epg='https://example.test/epg.xml';await api.saveEditLive();assert.equal(db.listLiveSources()[0].epg,'https://example.test/epg.xml');
   await api.addSource();assert.equal(db.listSources().length,2);assert.equal(db.listSources().find(item=>item.id==='added').name,'Added');
   ctx.sourceOrder.value=['point','added'];ctx.draggedSourceId.value='added';await api.moveSource('point');assert.deepEqual(JSON.parse(db.getSetting('source.order')),['added','point']);
   ctx.draggedSourceId.value='added';await api.moveSource('point');assert.deepEqual(JSON.parse(db.getSetting('source.order')),['point','added']);
-  await api.copySource(point);assert.deepEqual(clipboard,[point.endpoint]);await api.exportAudit('point');assert.deepEqual(exports,['point']);
+  await api.copySource(point);
+  await api.copySource({...live,sourceLabel:'显示名称'});
+  const localPath='D:\\直播 样例\\列表.m3u';
+  await api.copySource({...live,endpoint:'fnd-local://fixture',sourceLabel:localPath});
+  assert.match(ctx.importMessage.value,/文件路径已复制/);
+  await api.copySource({...live,endpoint:'fnd-local://missing-label'});
+  assert.deepEqual(clipboard,[point.endpoint,live.endpoint,localPath]);
+  ctx.window.desktop.app.action=async()=>false;
+  await api.copySource(point);
+  assert.match(ctx.error.value,/系统未确认/);
+  assert.equal(ctx.importMessage.value,'');
+  await api.exportAudit('point');assert.deepEqual(exports,['point']);
   ctx.onlyUnhealthy.value=true;assert.equal(api.visibleItems(ctx.sources.value).length,0);
   await api.remove(point);assert.equal(db.listSources().some(item=>item.id==='point'),false);assert.equal(db.listSources().length,1);
   await api.removeLive(live);assert.equal(db.listLiveSources().length,0);
+});
+
+test('application copy IPC acknowledges only text that can be read back',async()=>{
+  const file=await readFile(new URL('../../apps/desktop/src/main/index.ts',import.meta.url),'utf8');
+  const source=ts.createSourceFile('index.ts',file,ts.ScriptTarget.Latest,true);
+  let handler;
+  function visit(node){
+    if(ts.isCallExpression(node)&&node.expression.getText(source)==='ipcMain.handle'&&node.arguments[0]?.text==='app:action'){
+      handler=node.arguments[1]?.arguments?.[0];
+    }
+    ts.forEachChild(node,visit);
+  }
+  visit(source);
+  assert.ok(handler);
+  const writes=[];
+  let current='https://example.invalid/old';
+  const context={clipboard:{writeText:async value=>{writes.push(value);},readText:async()=>current}};
+  const script=ts.transpileModule('globalThis.action='+handler.getText(source),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  vm.runInNewContext(script,context);
+  const text='https://example.invalid/点播?token=%2B';
+  assert.equal(await context.action({copy:text}),false);
+  current=text;
+  assert.equal(await context.action({copy:text}),true);
+  current='one\r\ntwo';
+  assert.equal(await context.action({copy:'one\ntwo'}),true);
+  assert.deepEqual(writes,[text,text,'one\ntwo']);
 });
 
 test('partial bulk failures stay visible after refresh and canceled file dialogs do not remain importing',async()=>{

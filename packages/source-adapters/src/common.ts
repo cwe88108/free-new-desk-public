@@ -34,7 +34,7 @@ export function parseCmsCategories(payload:CmsJsonPayload):SourceCategory[]{
   const rows=categoryRecords(payload.class??payload.data?.class);
   const seen=new Set<string>();
   const output:SourceCategory[]=[];
-  for(const row of rows){const id=stringValue(row.type_id??row.id??row.tid),name=stringValue(row.type_name??row.name??row.title);if(!id||!name||seen.has(id))continue;seen.add(id);output.push({id,name});}
+  for(const row of rows){const id=stringValue(row.type_id??row.id??row.tid),name=stringValue(row.type_name??row.name??row.title),parentId=stringValue(row.type_pid??row.pid??row.parentId??row.parent_id);if(!id||!name||seen.has(id))continue;seen.add(id);output.push({id,name,...(parentId&&parentId!=='0'&&parentId!==id?{parentId}:{})});}
   return output;
 }
 function recordArray(value:unknown):JsonRecord[]{return Array.isArray(value)?value.filter((item):item is JsonRecord=>Boolean(item)&&typeof item==='object'&&!Array.isArray(item)):[];}
@@ -65,8 +65,9 @@ export function parseCmsXmlCategories(xml:string):SourceCategory[]{
   const seen=new Set<string>();
   const output:SourceCategory[]=[];
   for(const match of classBlock.matchAll(/<ty\b([^>]*)>([\s\S]*?)<\/ty>/gi)){
-    const attrs=match[1]??'';const id=attrs.match(/(?:id|type_id)=["']([^"']+)["']/i)?.[1]?.trim()??'';const name=decodeXml(match[2]??'');
-    if(!id||!name||seen.has(id))continue;seen.add(id);output.push({id,name});
+    const attrs=match[1]??'';const id=decodeXml(attrs.match(/(?:^|\s)(?:id|type_id)\s*=\s*["']([^"']+)["']/i)?.[1]??'');const name=decodeXml(match[2]??'');
+    const parentId=decodeXml(attrs.match(/(?:^|\s)(?:pid|type_pid|parentId|parent_id)\s*=\s*["']([^"']+)["']/i)?.[1]??'');
+    if(!id||!name||seen.has(id))continue;seen.add(id);output.push({id,name,...(parentId&&parentId!=='0'&&parentId!==id?{parentId}:{})});
   }
   return output;
 }

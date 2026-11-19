@@ -23,6 +23,11 @@ export class PlaybackSessionController{
     this.#snapshot={...meta,generation,sessionId,requestId,domain,status:'requested',initiator,desiredPaused:false,controlRevision:0,updatedAt:now};
     this.#publish();return this.current();
   }
+  bindHistory(requestId:string,historyId:string):PlaybackSessionSnapshot|undefined{
+    if(!this.isCurrent(requestId)||this.#snapshot.domain!=='vod'||!this.#snapshot.loadId||!historyId||!['playing','paused','ended'].includes(this.#snapshot.status))return;
+    // A short clip may reach EOF while optional subtitles finish loading.
+    this.#snapshot={...this.#snapshot,historyId,updatedAt:Date.now()};this.#publish();return this.current();
+  }
   assertCurrent(requestId:string):void{if(!requestId||this.#snapshot.requestId!==requestId)throw new PlaybackSupersededError();}
   assertMutable(requestId:string):void{this.assertCurrent(requestId);if(!mutableStatus(this.#snapshot.status))throw new PlaybackSupersededError();}
   isCurrent(requestId:string):boolean{return Boolean(requestId&&this.#snapshot.requestId===requestId);}

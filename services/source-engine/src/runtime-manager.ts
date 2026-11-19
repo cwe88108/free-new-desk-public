@@ -6,6 +6,9 @@ interface RuntimeEntry{
   inFlightCount:number;playbackLeaseCount:number;workerEpoch:number;
   lastIdleAt:number;retiring:boolean;queueTail:Promise<void>;
 }
+interface RuntimeInitialization{
+  promise:Promise<RuntimeEntry>;controller:AbortController;waiters:number;
+}
 export interface RuntimeSnapshot{
   key:string;sourceId:string;revision:string;inFlightCount:number;
   playbackLeaseCount:number;workerEpoch:number;retiring:boolean;
@@ -13,7 +16,7 @@ export interface RuntimeSnapshot{
 export interface RuntimeControls{acquireLease():string;}
 export interface RuntimeManagerOptions{
   maxExecutable:number;idleMs:number;initWaitMs?:number;isExecutable:(config:SourceConfig)=>boolean;
-  create:(config:SourceConfig)=>Promise<SourceAdapter>;
+  create:(config:SourceConfig,signal:AbortSignal)=>Promise<SourceAdapter>;
 }
 
 function stable(value:unknown):string{
@@ -29,7 +32,7 @@ function abortReason(signal?:AbortSignal):unknown{return signal?.reason??new DOM
 
 export class RuntimeManager{
   readonly #entries=new Map<string,RuntimeEntry>();
-  readonly #initializing=new Map<string,Promise<RuntimeEntry>>();
+  readonly #initializing=new Map<string,RuntimeInitialization>();
   readonly #leases=new Map<string,string>();
   readonly #desired=new Map<string,string>();
   #epoch=0;#capacityTail=Promise.resolve();#destroyed=false;
@@ -59,20 +62,54 @@ export class RuntimeManager{
     }
     if(active.length>=this.options.maxExecutable)throw new Error('RUNTIME_CAPACITY_EXCEEDED: all executable runtimes are busy');
   }
-  async #entry(config:SourceConfig):Promise<RuntimeEntry>{
+  #entry(config:SourceConfig):RuntimeEntry|RuntimeInitialization{
     if(this.#destroyed)throw new Error('RUNTIME_MANAGER_DESTROYED');
-    const key=runtimeKey(config),existing=this.#entries.get(key);if(existing)return existing;
+    const key=runtimeKey(config);
+    if(this.#desired.get(config.id)!==key)throw new DOMException('Source configuration was retired','AbortError');
+    const existing=this.#entries.get(key);if(existing)return existing;
     const pending=this.#initializing.get(key);if(pending)return pending;
-    const work=this.#withCapacityLock(async()=>{
+    const controller=new AbortController();
+    const initialization:RuntimeInitialization={controller,waiters:0,promise:undefined!};
+    initialization.promise=this.#withCapacityLock(async()=>{
+      controller.signal.throwIfAborted();
       const again=this.#entries.get(key);if(again)return again;
-      await this.#ensureCapacityLocked(config);const adapter=await this.options.create(config);
-      if(this.#destroyed){await adapter.destroy().catch(()=>undefined);throw new Error('RUNTIME_MANAGER_DESTROYED');}
+      await this.#ensureCapacityLocked(config);controller.signal.throwIfAborted();
+      const adapter=await this.options.create(config,controller.signal);
+      if(this.#destroyed||controller.signal.aborted){
+        await adapter.destroy().catch(()=>undefined);
+        controller.signal.throwIfAborted();throw new Error('RUNTIME_MANAGER_DESTROYED');
+      }
       const entry:RuntimeEntry={key,config,adapter,executable:this.options.isExecutable(config),inFlightCount:0,playbackLeaseCount:0,workerEpoch:++this.#epoch,lastIdleAt:0,retiring:this.#desired.get(config.id)!==key,queueTail:Promise.resolve()};
       this.#entries.set(key,entry);return entry;
-    }).finally(()=>{if(this.#initializing.get(key)===work)this.#initializing.delete(key);});
-    this.#initializing.set(key,work);return work;
+    }).finally(()=>{if(this.#initializing.get(key)===initialization)this.#initializing.delete(key);});
+    this.#initializing.set(key,initialization);return initialization;
   }
-  async #waitForEntry(config:SourceConfig,signal?:AbortSignal):Promise<RuntimeEntry>{const pending=this.#entry(config);if(!signal&&!(this.options.initWaitMs&&this.options.initWaitMs>0))return pending;let timer:ReturnType<typeof setTimeout>|undefined,abort:((()=>void))|undefined;const gate=new Promise<never>((_resolve,reject)=>{if(signal){abort=()=>reject(abortReason(signal));signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();}const timeoutMs=this.options.initWaitMs??15_000;if(timeoutMs>0)timer=setTimeout(()=>reject(new Error(`[RUNTIME_INIT_TIMEOUT] 来源运行时初始化超过 ${timeoutMs}ms`)),timeoutMs);});try{return await Promise.race([pending,gate]);}finally{if(timer)clearTimeout(timer);if(signal&&abort)signal.removeEventListener('abort',abort);}}
+  async #waitForEntry(config:SourceConfig,signal?:AbortSignal):Promise<RuntimeEntry>{
+    signal?.throwIfAborted();
+    const source=this.#entry(config);if(!('promise' in source))return source;
+    // A new caller must not attach to an initialization already cancelled by its last waiter.
+    const retry=source.controller.signal.aborted;
+    source.waiters+=1;
+    let timer:ReturnType<typeof setTimeout>|undefined,abort:(()=>void)|undefined;
+    let revoked:(()=>void)|undefined;
+    const gate=new Promise<never>((_resolve,reject)=>{
+      if(!retry){revoked=()=>reject(abortReason(source.controller.signal));source.controller.signal.addEventListener('abort',revoked,{once:true});if(source.controller.signal.aborted)revoked();}
+      if(signal){abort=()=>reject(abortReason(signal));signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();}
+      const timeoutMs=this.options.initWaitMs??(signal?15_000:0);
+      if(timeoutMs>0)timer=setTimeout(()=>reject(new Error(`[RUNTIME_INIT_TIMEOUT] 来源运行时初始化超过 ${timeoutMs}ms`)),timeoutMs);
+    });
+    let entry:RuntimeEntry|undefined;
+    try{
+      const pending=retry?source.promise.then(()=>undefined,()=>undefined):source.promise;
+      entry=await Promise.race([pending,gate]);
+    }finally{
+      if(timer)clearTimeout(timer);if(signal&&abort)signal.removeEventListener('abort',abort);
+      if(revoked)source.controller.signal.removeEventListener('abort',revoked);
+      source.waiters-=1;
+      if(source.waiters===0&&this.#initializing.get(runtimeKey(config))===source)source.controller.abort();
+    }
+    return entry??this.#waitForEntry(config,signal);
+  }
   async #serialized<T>(entry:RuntimeEntry,signal:AbortSignal|undefined,action:()=>Promise<T>):Promise<T>{
     const previous=entry.queueTail;let release!:()=>void;
     entry.queueTail=new Promise<void>(resolve=>{release=resolve;});
@@ -98,8 +135,12 @@ export class RuntimeManager{
     await this.#cleanupRetiring(entry);return true;
   }
   async reconcile(configs:SourceConfig[]):Promise<void>{
-    const active=new Map(configs.map(config=>[config.id,runtimeKey(config)]));
+    const active=new Map(configs.filter(config=>config.enabled).map(config=>[config.id,runtimeKey(config)]));
     this.#desired.clear();for(const[id,key]of active)this.#desired.set(id,key);
+    // Revoke pending creations before any await. Do not wait for a stalled download
+    // to settle here; adapters must check this signal before executing its bytes.
+    const desiredKeys=new Set(active.values());
+    for(const[key,work]of this.#initializing)if(!desiredKeys.has(key))work.controller.abort();
     for(const entry of [...this.#entries.values()]){
       if(active.get(entry.config.id)===entry.key)continue;
       entry.retiring=true;await this.#cleanupRetiring(entry);
@@ -112,7 +153,7 @@ export class RuntimeManager{
     }
   }
   async resetSource(sourceId:string):Promise<void>{
-    const pending=[...this.#initializing.entries()].filter(([key])=>key.startsWith(`${sourceId}\u0000`)).map(([,work])=>work);await Promise.allSettled(pending);
+    const pending=[...this.#initializing.entries()].filter(([key])=>key.startsWith(`${sourceId}\u0000`)).map(([,work])=>work);for(const work of pending)work.controller.abort();await Promise.allSettled(pending.map(work=>work.promise));
     for(const entry of [...this.#entries.values()])if(entry.config.id===sourceId){for(const[id,key]of this.#leases)if(key===entry.key)this.#leases.delete(id);await this.#dispose(entry);}
   }
   snapshot():RuntimeSnapshot[]{
@@ -125,7 +166,7 @@ export class RuntimeManager{
   async destroy():Promise<void>{
     this.#destroyed=true;this.#leases.clear();this.#desired.clear();
     const pending=[...this.#initializing.values()];this.#initializing.clear();
-    await Promise.allSettled(pending);
+    for(const work of pending)work.controller.abort();await Promise.allSettled(pending.map(work=>work.promise));
     const entries=[...this.#entries.values()];this.#entries.clear();
     await Promise.allSettled(entries.map(entry=>entry.adapter.destroy()));
   }
