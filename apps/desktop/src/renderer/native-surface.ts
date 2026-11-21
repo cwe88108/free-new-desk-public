@@ -7,11 +7,23 @@ type LeaseState={ownerId:string;scope:string;generation:number;lastBounds?:Surfa
 type PendingSync={state:LeaseState;bounds:SurfaceBounds;visible:boolean;waiters:Array<{resolve:(value:boolean)=>void;reject:(reason:unknown)=>void}>};
 let currentOwner='';let currentGeneration=0;let tail:Promise<void>=Promise.resolve();let fullscreen=false;let activeState:LeaseState|undefined;let pendingSync:PendingSync|undefined;let syncDraining=false;
 let runtimeIdentity='';let runtimeRevision=0;let hostEpoch='';
+const occludingPanels = new Set<string>();
+
+export function setNativeSurfaceOccluded(panel: string, occluded: boolean): void {
+  if (window.desktop.rollback?.nativeOcclusion) return;
+  const wasOccluded = occludingPanels.size > 0;
+  if (occluded) occludingPanels.add(panel);
+  else occludingPanels.delete(panel);
+  const state = activeState;
+  if (wasOccluded === (occludingPanels.size > 0) || fullscreen || !state?.lastBounds || state.released || !state.lastVisible) return;
+  void coalescedSync(state, state.lastBounds, true).catch(() => false);
+}
 function enqueue<T>(work:()=>Promise<T>):Promise<T>{const next=tail.then(work,work);tail=next.then(()=>undefined,()=>undefined);return next;}
 function settlePending(state:LeaseState,value=false):void{if(pendingSync?.state!==state)return;const pending=pendingSync;pendingSync=undefined;for(const waiter of pending.waiters)waiter.resolve(value);}
 function coalescedSync(state:LeaseState,bounds:SurfaceBounds,visible:boolean):Promise<boolean>{return new Promise<boolean>((resolve,reject)=>{if(pendingSync&&pendingSync.state!==state){const stale=pendingSync;pendingSync=undefined;for(const waiter of stale.waiters)waiter.resolve(false);}if(pendingSync){pendingSync.bounds=bounds;pendingSync.visible=visible;pendingSync.waiters.push({resolve,reject});}else pendingSync={state,bounds,visible,waiters:[{resolve,reject}]};if(!syncDraining)void drainSync();});}
 async function drainSync():Promise<void>{if(syncDraining)return;syncDraining=true;try{while(pendingSync){const current=pendingSync;pendingSync=undefined;try{const value=await enqueue(()=>sendSync(current.state,current.bounds,current.visible));for(const waiter of current.waiters)waiter.resolve(value);}catch(error){for(const waiter of current.waiters)waiter.reject(error);}}}finally{syncDraining=false;if(pendingSync)void drainSync();}}
 async function sendSync(state:LeaseState,bounds:SurfaceBounds,visible:boolean,force=false):Promise<boolean>{
+  visible = visible && occludingPanels.size === 0;
   const clip=window.document?.querySelector('.content')?.getBoundingClientRect();
   if(clip&&visible)visible=surfaceFitsContent(bounds,clip);
   const generation=state.generation,revision=runtimeRevision;

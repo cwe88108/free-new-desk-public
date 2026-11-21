@@ -6,9 +6,62 @@ export const clockLoadStatus=shallowRef<PlayerLoadStatus|null>(null);
 export const clockPosition=ref(0),clockStale=ref(true);
 type SeekState={serial:number;target:number;loadId:string;requestId:string;deadline:number};
 export const clockDiagnostics={rejected:0,reason:'',sampleAgeMs:0};
+const legacyClock = window.desktop.rollback?.playbackClock === true;
 let started=false,inFlight:Promise<void>|undefined,anchorAt=0,anchor=0,frame=0,seekSerial=0,seekState:SeekState|undefined;
-function reset(){clockStats.value=null;clockLoadStatus.value=null;anchorAt=0;anchor=0;clockPosition.value=0;clockStale.value=true;seekState=undefined;seekSerial++;}
-function runtime(value:PlaybackSessionSnapshot){const previous=clockRuntime.value;if(value.generation<previous.generation)return;if(value.generation===previous.generation&&value.requestId===previous.requestId&&value.updatedAt<previous.updatedAt)return;if(value.requestId!==previous.requestId||value.loadId!==previous.loadId||value.status==='stopped')reset();clockRuntime.value=value;}
+let visualSubscribers = 0;
+let staleTimer: ReturnType<typeof setTimeout> | undefined;
+
+function invalidateAnchor() {
+  anchorAt = 0;
+  clockStale.value = true;
+  clearTimeout(staleTimer);
+  if (!legacyClock) {
+    cancelAnimationFrame(frame);
+    frame = 0;
+  }
+}
+
+function canDrawPosition(): boolean {
+  const sample = clockStats.value;
+  return (legacyClock || (visualSubscribers > 0 && clockRuntime.value.domain === 'music'))
+    && !document.hidden && !clockStale.value && !seekState && clockRuntime.value.status === 'playing'
+    && Boolean(sample && !sample.paused && !sample.pausedForCache);
+}
+
+function scheduleVisualClock() {
+  if (frame || (legacyClock ? !started : !canDrawPosition())) return;
+  frame = requestAnimationFrame(now => {
+    frame = 0;
+    const sample = clockStats.value;
+    const age = Math.max(0, now - anchorAt);
+    if (legacyClock) {
+      clockStale.value = !anchorAt || age > 1000;
+      clockDiagnostics.sampleAgeMs = Math.round(age);
+      if (seekState) clockPosition.value = seekState.target;
+    }
+    if (sample && canDrawPosition()) {
+      const position = anchor + age / 1000 * sample.speed;
+      clockDiagnostics.sampleAgeMs = Math.round(age);
+      clockPosition.value = sample.duration > 0 ? Math.min(sample.duration, position) : position;
+    }
+    scheduleVisualClock();
+  });
+}
+
+export function observePlaybackPosition(): () => void {
+  visualSubscribers++;
+  scheduleVisualClock();
+  return () => {
+    visualSubscribers--;
+    if (!legacyClock && !visualSubscribers) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+    }
+  };
+}
+
+function reset(){invalidateAnchor();clockStats.value=null;clockLoadStatus.value=null;anchor=0;clockPosition.value=0;seekState=undefined;seekSerial++;}
+function runtime(value:PlaybackSessionSnapshot){const previous=clockRuntime.value;if(value.generation<previous.generation)return;if(value.generation===previous.generation&&value.requestId===previous.requestId&&value.updatedAt<previous.updatedAt)return;if(value.requestId!==previous.requestId||value.loadId!==previous.loadId||value.status==='stopped')reset();clockRuntime.value=value;scheduleVisualClock();}
 function acceptSample(sample:PlayerStats,current:PlaybackSessionSnapshot):boolean{
   if(current.status==='stopped')return false;
   if(sample.sampleFresh!==true||sample.sampleState&&sample.sampleState!=='fresh'||sample.samplePositionStable===false){clockDiagnostics.rejected++;clockDiagnostics.reason='sample-not-fresh-and-stable';return false;}
@@ -20,7 +73,19 @@ function acceptSample(sample:PlayerStats,current:PlaybackSessionSnapshot):boolea
     if(Math.abs(sample.position-seekState.target)>tolerance)return false;
     seekState=undefined;
   }
-  clockDiagnostics.reason='';clockStats.value=sample;anchor=sample.position;anchorAt=performance.now();clockPosition.value=anchor;clockStale.value=false;return true;
+  clockDiagnostics.reason = '';
+  clockDiagnostics.sampleAgeMs = 0;
+  clockStats.value = sample;
+  anchor = sample.position;
+  anchorAt = performance.now();
+  if (legacyClock || !document.hidden || visualSubscribers) clockPosition.value = anchor;
+  clockStale.value = false;
+  if (!legacyClock) {
+    clearTimeout(staleTimer);
+    staleTimer = setTimeout(invalidateAnchor, 1000);
+  }
+  scheduleVisualClock();
+  return true;
 }
 export async function refreshPlaybackClock():Promise<void>{
   if(inFlight)return inFlight;
@@ -35,19 +100,42 @@ export async function refreshPlaybackClock():Promise<void>{
     if(current.status!=='stopped'&&l.status==='fulfilled'&&l.value.loadId===current.loadId)clockLoadStatus.value=l.value;
     if(s.status==='fulfilled')acceptSample(s.value,current);
   })().finally(()=>{inFlight=undefined;});return inFlight;
-}export function startPlaybackClock(){if(started)return;started=true;window.desktop.playback.onRuntimeSessionChanged(runtime);
-  const poll=setInterval(()=>{void refreshPlaybackClock();},275);
-  const tick=()=>{const sample=clockStats.value,age=performance.now()-anchorAt;clockDiagnostics.sampleAgeMs=Math.round(age);clockStale.value=!anchorAt||age>1000;
-    if(seekState){clockPosition.value=seekState.target;}
-    else if(!clockStale.value&&sample&&!sample.paused&&!sample.pausedForCache&&clockRuntime.value.status==='playing'&&!document.hidden){const position=anchor+age/1000*sample.speed;clockPosition.value=sample.duration>0?Math.min(sample.duration,position):position;}
-    frame=requestAnimationFrame(tick);
-  };frame=requestAnimationFrame(tick);
-  document.addEventListener('visibilitychange',()=>{anchorAt=0;clockStale.value=true;if(!document.hidden)void refreshPlaybackClock();});
-  window.addEventListener('beforeunload',()=>{clearInterval(poll);cancelAnimationFrame(frame);},{once:true});void refreshPlaybackClock();
+}
+
+export function startPlaybackClock() {
+  if (started) return;
+  started = true;
+  const unsubscribe = window.desktop.playback.onRuntimeSessionChanged(value => {
+    const loadChanged = clockRuntime.value.loadId !== value.loadId || clockRuntime.value.requestId !== value.requestId;
+    runtime(value);
+    if (!legacyClock && loadChanged && value.loadId && value.status !== 'stopped') void refreshPlaybackClock();
+  });
+  // Active loads still need authoritative sampling for queue advance and background audio.
+  const poll = setInterval(() => {
+    if (legacyClock || (clockRuntime.value.loadId && clockRuntime.value.status !== 'stopped')) void refreshPlaybackClock();
+  }, 275);
+  const onVisibilityChange = () => {
+    invalidateAnchor();
+    if (!document.hidden) void refreshPlaybackClock();
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('beforeunload', () => {
+    clearInterval(poll);
+    unsubscribe();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    invalidateAnchor();
+    if (legacyClock) {
+      started = false;
+      cancelAnimationFrame(frame);
+      frame = 0;
+    }
+  }, { once: true });
+  if (legacyClock) scheduleVisualClock();
+  void refreshPlaybackClock();
 }
 export async function seekPlayback(position:number,loadId:string,requestId:string):Promise<void>{
   if(!Number.isFinite(position)||clockRuntime.value.loadId!==loadId||clockRuntime.value.requestId!==requestId)throw new Error('[PLAYBACK_SUPERSEDED] seek 会话已变化');
-  const serial=++seekSerial,target=Math.max(0,Math.min(clockStats.value?.duration||Number.POSITIVE_INFINITY,position));seekState={serial,target,loadId,requestId,deadline:performance.now()+2500};clockPosition.value=target;anchorAt=0;clockStale.value=true;
+  const serial=++seekSerial,target=Math.max(0,Math.min(clockStats.value?.duration||Number.POSITIVE_INFINITY,position));seekState={serial,target,loadId,requestId,deadline:performance.now()+2500};clockPosition.value=target;invalidateAnchor();
   try{
     const result=await window.desktop.playback.control({command:'seek',value:target,absolute:true,loadId,requestId});if(!result.ok)throw new Error(result.detail??'定位失败');
     while(seekState?.serial===serial&&performance.now()<seekState.deadline){await new Promise(resolve=>setTimeout(resolve,75));await refreshPlaybackClock();}

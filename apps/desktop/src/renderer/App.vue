@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed,onBeforeUnmount,onMounted,ref,watch } from 'vue';
+import { computed,nextTick,onBeforeUnmount,onMounted,ref,watch } from 'vue';
 import {clockRuntime} from './stores/playback-session';
 import {nowPlayingTitle} from './now-playing-title';
 import type {PlaybackHistoryEntry} from '@free-new-desk/contracts';
@@ -11,6 +11,8 @@ import ToastHost from './components/ToastHost.vue';
 import {usePageStateStore} from './stores/page-state';
 import CommandPalette from './components/CommandPalette.vue';
 import AppIcon from './components/AppIcon.vue';
+import { SEASONS, appearance, saveAppearance } from './appearance';
+import { setNativeSurfaceOccluded } from './native-surface';
 
 const route=useRoute();
 const router=useRouter();
@@ -19,6 +21,20 @@ const isPackaged=ref(false);
 const sourceHealthy=ref<boolean|null>(null);
 const navigatingPath=ref('');
 const menuOpen=ref(false);
+const titleMenuButton=ref<HTMLButtonElement|null>(null);
+const firstTitleMenuAction=ref<HTMLButtonElement|null>(null);
+watch(menuOpen, value => {
+  setNativeSurfaceOccluded('title-menu', value);
+  if(value)void nextTick(()=>firstTitleMenuAction.value?.focus());
+});
+function dismissTitleMenu(event:KeyboardEvent){
+  if(!menuOpen.value)return;
+  event.preventDefault();
+  event.stopPropagation();
+  menuOpen.value=false;
+  titleMenuButton.value?.focus();
+}
+onBeforeUnmount(() => setNativeSurfaceOccluded('title-menu', false));
 const renderMode=ref(localStorage.getItem('player.hwdec')==='off'?'软件解码（CPU）':'硬件加速（GPU）');
 const playerStats=clockStats;
 const playerReachable=computed(()=>!clockStale.value&&clockStats.value?.sampleFresh===true);
@@ -27,6 +43,17 @@ let removeHealthListener:(()=>void)|undefined;
 let removeNavigateListener:(()=>void)|undefined;
 let renderModeListener:((event:Event)=>void)|undefined;
 const toast=useToastStore();
+async function changeSeason(event: Event) {
+  const select = event.target as HTMLSelectElement;
+  const season = SEASONS.find(choice => choice.id === select.value);
+  if (!season) return;
+  try {
+    await saveAppearance('ui.season', season.id);
+  } catch (error) {
+    select.value = appearance.value['ui.season'];
+    toast.error('保存主题失败', String(error));
+  }
+}
 const items=[
   {key:'home',path:'/',label:'首页',icon:'nav-home'},
   {key:'vod',path:'/vod',label:'点播',icon:'nav-vod'},
@@ -44,7 +71,19 @@ const systemItems=[
   {key:'settings',path:'/settings',label:'设置',icon:'nav-settings'}
 ] as const;
 const current=computed(()=>route.path);
-async function navigate(path:string){if(navigatingPath.value||current.value===path)return;navigatingPath.value=path;const started=performance.now();try{await router.push(path);const elapsed=performance.now()-started;void window.desktop.diagnostics.recordPerformance('navigationMs',elapsed).catch(()=>false);if(window.desktop.app.isUiSmoke()&&elapsed>100)throw new Error(`Navigation exceeded 100ms budget: ${path} ${elapsed.toFixed(1)}ms`);}finally{requestAnimationFrame(()=>{navigatingPath.value='';});}}
+async function navigate(path:string){
+  if(navigatingPath.value||current.value===path)return;
+  navigatingPath.value=path;
+  const started=performance.now();
+  try{
+    await router.push(path);
+    const elapsed=performance.now()-started;
+    void window.desktop.diagnostics.recordPerformance('navigationMs',elapsed).catch(()=>false);
+    if(window.desktop.app.isUiSmoke()&&elapsed>100)throw new Error(`Navigation exceeded 100ms budget: ${path} ${elapsed.toFixed(1)}ms`);
+  }finally{
+    navigatingPath.value='';
+  }
+}
 async function appAction(action:'reload'|'devtools'|'quit'){menuOpen.value=false;await window.desktop.app.action(action);}
 async function refreshPlayer(){await refreshPlaybackClock().catch(()=>undefined);}
 async function playerControl(command:'pause'|'mute',value:boolean){await window.desktop.playback.control({command,value});await refreshPlayer();}
@@ -90,24 +129,32 @@ onBeforeUnmount(()=>{stopMusicPlaybackController();removeSourcesListener?.();rem
       <div class="app-brand">
         <img class="brand-mark" :src="appIconUrl" alt="" aria-hidden="true"/>
         <strong>Free New Desk</strong>
-      </div><div class="title-actions"><button class="title-menu-button" aria-label="扩展菜单" :aria-expanded="menuOpen" @click="menuOpen=!menuOpen"><AppIcon name="action-more" :size="18"/></button><div v-if="menuOpen" class="title-menu"><button @click="appAction('reload')">刷新界面</button><button v-if="!isPackaged" @click="appAction('devtools')">开发者工具</button><button @click="appAction('quit')">退出应用</button></div></div>
+      </div>
+      <div class="title-actions" @keydown.esc="dismissTitleMenu">
+        <button ref="titleMenuButton" class="title-menu-button" aria-label="扩展菜单" :aria-expanded="menuOpen" @click="menuOpen=!menuOpen"><AppIcon name="action-more" :size="18"/></button>
+        <div v-if="menuOpen" class="title-menu">
+          <button ref="firstTitleMenuAction" @click="appAction('reload')">刷新界面</button>
+          <button v-if="!isPackaged" @click="appAction('devtools')">开发者工具</button>
+          <button @click="appAction('quit')">退出应用</button>
+        </div>
+      </div>
     </header>
 
     <aside class="navigation" aria-label="主导航">
       <nav class="nav-stack">
         <div class="nav-section">内 容</div>
-        <button v-for="item in items" :key="item.path" class="nav-item" :data-smoke-key="item.key" :class="{active:current===item.path}" :disabled="navigatingPath===item.path" :aria-busy="navigatingPath===item.path" @click="navigate(item.path)">
+        <button v-for="item in items" :key="item.path" class="nav-item" :data-smoke-key="item.key" :class="{active:current===item.path}" :aria-label="item.label" :title="item.label" :aria-current="current===item.path?'page':undefined" :disabled="navigatingPath===item.path" :aria-busy="navigatingPath===item.path" @click="navigate(item.path)">
           <AppIcon class="nav-icon" :name="item.icon" :size="20"/>
           <span>{{item.label}}</span>
         </button>
         <div class="nav-section">我 的</div>
-        <button v-for="item in myItems" :key="item.path" class="nav-item" :data-smoke-key="item.key" :class="{active:current===item.path}" :disabled="navigatingPath===item.path" :aria-busy="navigatingPath===item.path" @click="navigate(item.path)">
+        <button v-for="item in myItems" :key="item.path" class="nav-item" :data-smoke-key="item.key" :class="{active:current===item.path}" :aria-label="item.label" :title="item.label" :aria-current="current===item.path?'page':undefined" :disabled="navigatingPath===item.path" :aria-busy="navigatingPath===item.path" @click="navigate(item.path)">
           <AppIcon class="nav-icon" :name="item.icon" :size="20"/>
           <span>{{item.label}}</span>
           <span v-if="item.key==='search'" class="nav-kbd" aria-hidden="true">Ctrl K</span>
         </button>
         <div class="nav-section">系 统</div>
-        <button v-for="item in systemItems" :key="item.path" class="nav-item" :data-smoke-key="item.key" :class="{active:current===item.path}" :disabled="navigatingPath===item.path" :aria-busy="navigatingPath===item.path" @click="navigate(item.path)">
+        <button v-for="item in systemItems" :key="item.path" class="nav-item" :data-smoke-key="item.key" :class="{active:current===item.path}" :aria-label="item.label" :title="item.label" :aria-current="current===item.path?'page':undefined" :disabled="navigatingPath===item.path" :aria-busy="navigatingPath===item.path" @click="navigate(item.path)">
           <AppIcon class="nav-icon" :name="item.icon" :size="20"/>
           <span>{{item.label}}</span>
         </button>
@@ -119,6 +166,12 @@ onBeforeUnmount(()=>{stopMusicPlaybackController();removeSourcesListener?.();rem
           <div class="np-copy"><strong :title="nowPlayingName">{{nowPlayingName}}</strong><small>{{mediaStatus}}</small></div>
         </div>
         <div class="np-actions"><button class="np-return" @click="navigate('/player')">返回播放器</button></div>
+      </div>
+      <div class="navigation-theme">
+        <span class="navigation-theme-swatch" aria-hidden="true"/>
+        <select :value="appearance['ui.season']" aria-label="四季主题" @change="changeSeason">
+          <option v-for="choice in SEASONS" :key="choice.id" :value="choice.id">{{choice.name}}</option>
+        </select>
       </div>
     </aside>
 
@@ -147,7 +200,7 @@ onBeforeUnmount(()=>{stopMusicPlaybackController();removeSourcesListener?.();rem
 .title-actions{position:relative;margin-left:auto;align-self:center;-webkit-app-region:no-drag}.title-menu-button{width:38px;height:30px;border:0;border-radius:7px;background:transparent;font-weight:800;letter-spacing:2px}.title-menu{position:absolute;right:8px;top:34px;z-index:1000;min-width:140px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.18)}.title-menu button{display:block;width:100%;padding:8px 10px;border:0;border-radius:6px;background:transparent;text-align:left}.title-menu button:hover{background:var(--surface-2)}.nav-item:disabled{opacity:.6;cursor:wait}.brand-mark svg path{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .now-playing-card{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:10px 11px;display:grid;gap:8px;flex:none;margin-bottom:2px}
 .now-playing-card .np-row{display:grid;grid-template-columns:26px 1fr;gap:9px;align-items:center;min-width:0}
-.now-playing-card .np-glyph{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:10px;flex:none}
+.now-playing-card .np-glyph{width:26px;height:26px;border-radius:7px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-size:10px;flex:none}
 .now-playing-card .np-copy{min-width:0;display:flex;flex-direction:column;gap:2px}
 .now-playing-card .np-copy strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .now-playing-card .np-copy small{font-size:10.5px;color:var(--muted)}

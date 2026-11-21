@@ -1,0 +1,109 @@
+.app-shell{grid-template-columns:194px minmax(0,1fr)}
+.content{container:desktop-content / inline-size;min-width:0;min-height:0}
+.content .page{padding:clamp(14px,2.3cqi,28px) clamp(14px,3cqi,36px) 28px}
+.content .page-heading h1,.content .page-banner h1{font-size:calc(30px * var(--font-scale));line-height:1.35;overflow-wrap:anywhere}
+.content .player-page>.page-heading h1{font-size:0}
+.content .player-page>.page-heading h1::before{font-size:calc(30px * var(--font-scale))}
+.navigation .nav-stack{min-height:0;overflow:auto;overscroll-behavior:contain;padding:3px;scrollbar-width:thin}
+.navigation .side-spacer{flex:1 1 auto}
+.navigation .nav-item{min-height:39px;flex:none}
+.navigation .nav-kbd{background:transparent;color:var(--nav-muted)}
+.navigation :focus-visible{outline-offset:-2px}
+.statusbar{padding:0 14px 0 20px;gap:14px}
+.statusbar>span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis}
+.page :is(.panel,.setting-card,.toolbar-group,.page-heading>*,.row-actions,.control-row,.table-actions){min-width:0}
+.page :is(.page-heading,.toolbar-group,.row-actions,.control-row,.table-actions,.transport-bar){flex-wrap:wrap}
+.page :is(.toolbar-group,.row-actions,.control-row,.table-actions)>*{max-width:100%}
+.page :is(input,select,textarea){max-width:100%;min-width:0}
+.page :is(.error-banner,.status-line,.muted-copy,.helper-text){overflow-wrap:anywhere}
+.page .player-workspace{grid-template-columns:minmax(0,1fr) minmax(248px,27%)}
+.page .player-surface{border-radius:10px}
+.page .playlist-title,.page .epg-title{overflow-wrap:anywhere}
+.page .live-console{min-height:0;margin:0;gap:12px;grid-template-columns:minmax(190px,23%) minmax(0,1fr) minmax(205px,24%)}
+.page .channel-list.refined{min-height:210px;max-height:min(520px,55vh)}
+.page :is(.compatibility-table-wrap,.source-table-wrap){max-width:100%;overflow:auto}
+.page .detail-rail{min-height:0;max-height:none;align-self:start;overflow-wrap:anywhere}
+.page .vod-workspace.vod-without-source{grid-template-columns:minmax(0,1fr)}
+.page .poster-grid.cinematic{grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));padding:4px;gap:14px}
+.page .vod-context-menu{max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto}
+.page .setting-card .segmented{flex-wrap:wrap}
+.page .setting-card .accent-row{flex-wrap:wrap}
+.page dialog{max-width:calc(100% - 28px);max-height:calc(100% - 38px);overflow:auto}
+.page .tl-played,.page .resume-progress i{background:var(--progress-fill)}
+.content .music-page h1{font-family:var(--heading-font);font-size:calc(32px * var(--font-scale))}
+.content .music-page{--music-accent:var(--accent-strong)}
+.content .music-page .music-heading{flex-wrap:wrap}
+.content .music-page .music-actions{flex-wrap:wrap;min-width:0;max-width:none}
+.content .music-page .music-actions input{max-width:100%;min-width:0}
+.content .music-page .music-actions>button:not(.source-mobile-button){display:inline-flex;align-items:center;justify-content:center}
+.content .music-page :is(.music-actions .accent-button,.transport .play-main){color:var(--on-accent);background:var(--accent)}
+.content .music-page .entity-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr));gap:14px}
+.content .music-page .entity-grid .entity-art{aspect-ratio:1}
+.content .music-page .library-tabs{gap:12px;flex-wrap:wrap}
+.content .music-page .transport{min-width:0;flex-wrap:wrap}
+
+.page .live-source-strip{flex-wrap:wrap;overflow-wrap:anywhere}
+.page .pane-heading{flex-wrap:wrap}
+
+@media(min-height:730px) and (forced-colors:none){
+  @container desktop-content (min-width:960px){
+    :root:is([data-season=summer],[data-season=winter])[data-effects=standard]
+      .content :is(.home-page>.greet-row,.vod-page>.vod-heading,.music-page>.music-heading,.player-page>.page-heading){
+      min-height:80px;
+      padding:9px 16px 9px 18px;
+      border:1px solid var(--masthead-border);
+      border-radius:11px;
+      background:var(--masthead-wash),
+        var(--masthead-art) center 54% / cover no-repeat var(--masthead);
+      & h1,& .greet-sub b,& .view-tabs button.active{color:var(--masthead-title)}
+      & .greet-sub,& .view-tabs button{color:var(--masthead-secondary)}
+      & .view-tabs button.active{border-color:var(--masthead-title)}
+      & >div:first-child{max-width:52%}
+      & :focus-visible{outline:2px solid #fff;box-shadow:0 0 0 5px #242424}
+    }
+  }
+}
+
+@media(max-width:1040px){
+  .app-shell{grid-template-columns:132px minmax(0,1fr)}
+  .navigation .nav-item{justify-content:flex-start;padding:0 8px;gap:8px}
+  .navigation .nav-item>span:not(.nav-kbd){display:inline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .navigation .nav-item .nav-kbd{display:none}
+  .navigation-theme select{font-size:clamp(12px,calc(12px * var(--font-scale)),16px)}
+  .statusbar>span:last-child,.statusbar>span.status-detail{display:initial}
+}
+@media(max-width:690px){
+  .app-shell{grid-template-columns:78px minmax(0,1fr)}
+  .navigation .nav-item{justify-content:center;padding:0}
+  .navigation .nav-item>span:not(.nav-kbd){display:none}
+  .navigation-theme{padding:0}
+  .navigation-theme-swatch{display:none}
+  .statusbar>span.status-detail{display:none}
+}
+@container desktop-content (max-width:1120px){
+  .content .page .history-workspace{grid-template-columns:minmax(0,1fr)}
+}
+@container desktop-content (max-width:1000px){
+  .content .page .live-console{grid-template-columns:minmax(180px,26%) minmax(0,1fr);grid-template-areas:"channels player" "epg epg"}
+  .content .page .settings-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .content .page .settings-card-grid>.setting-card:nth-child(4){grid-column:auto;grid-row:auto}
+}
+@container desktop-content (max-width:880px){
+  .content .page :is(.vod-workspace,.search-workspace,.favorites-workspace,.player-workspace,.source-workspace,.settings-bottom-grid){grid-template-columns:minmax(0,1fr)}
+  .content .page .detail-rail{position:static}
+  .content .page .vod-detail:has(.detail-empty){display:none}
+  .content .page .history-table-row{
+    display:flex;flex-wrap:wrap;gap:8px 13px;padding:10px 12px;align-items:center;
+  }
+  .content .page .history-table-row .history-media{flex:1 1 180px;min-width:0}
+  .content .page .history-table-row .history-actions{margin-left:auto;flex:none}
+  .content .page .history-table-row>span{min-width:0;overflow-wrap:anywhere}
+  .content .page .history-table-head{display:none}
+}
+@container desktop-content (max-width:620px){
+  .content .page .live-console{grid-template-columns:minmax(0,1fr);grid-template-areas:"player" "channels" "epg"}
+  .content .page :is(.settings-card-grid,.maintenance-grid){grid-template-columns:minmax(0,1fr)}
+  .content .page .channel-list.refined{max-height:285px}
+  .content .page .page-heading{gap:9px}
+  .content .page .bulk-toolbar{flex-wrap:wrap}
+}

@@ -236,17 +236,57 @@ onBeforeUnmount(()=>{tracksRefresh=undefined;allowSurfaceSync=false;removeAfterN
         <section class="panel playback-status" role="status" aria-label="播放状态"><strong :class="{good:runtimeSession.status==='playing'&&!playbackError&&!liveBuffering,danger:!!playbackError}"><i/>{{playbackError?'播放失败':runtimeSession.status==='paused'?'已暂停':runtimeSession.status==='playing'?(paused?'已暂停':liveBuffering?'正在缓冲':'播放中'):runtimeSession.status==='loading'?'正在连接':runtimeSession.status==='ended'?'播放结束':'等待播放'}}</strong><span v-if="isVod&&currentQueueEntry">{{currentQueueEntry.videoName}} · {{currentQueueEntry.episodeName}}</span><span v-else>{{actualDomain==='live'?'直播':actualDomain==='music'?'音乐':'暂无播放会话'}}</span><span v-if="status" class="playback-status-message" :title="status">{{status}}</span><span v-if="stats?.width">{{resolution}} · {{stats.videoFormat||'—'}}</span></section>
     <div v-if="surfaceError" class="player-error" role="alert"><strong>视频画面未挂载</strong><p>{{surfaceError}}</p><div class="row-actions"><button class="primary-button" @click="syncSurface()">重新挂载画面</button><button class="text-link" @click="openDiagnostics">打开诊断</button></div></div>
     <div v-if="playbackError" class="player-error" role="alert"><div class="player-error-head"><strong>播放失败</strong><span v-if="playbackCode" class="error-code">错误码 {{playbackCode}}</span></div><p>{{stripPlaybackCode(playbackError)}}</p><p class="error-context">播放域：{{actualDomain??(lastFailedPending?'vod':'未知')}} · 来源：{{failureSourceName}} · 线路：{{failureFlag}}</p><div class="row-actions"><button class="primary-button" :disabled="liveRetrying" @click="retryPlayback">重试</button><button v-if="isVod||lastFailedPending" class="secondary-button" :disabled="!nextRouteFlag" :title="nextRouteFlag?`切换到线路「${nextRouteFlag}」`:''" @click="switchRoute">切换线路</button><button class="text-link" @click="openDiagnostics">打开诊断</button></div></div>
-    <section class="panel queue-panel"><div class="panel-heading"><div><span class="panel-kicker">点播历史</span><h2>{{isVod?'当前点播队列':'仅浏览，不参与当前播放'}}</h2></div><div class="queue-actions"><button class="text-link" :disabled="!queue.length" @click="saveQueue">保存队列</button><button class="text-link" :disabled="!queue.length" @click="clearQueue">清空并保存</button><RouterLink class="text-link" to="/history">查看全部</RouterLink></div></div><div v-if="queue.length" class="queue-strip"><button v-for="(item,index) in queue" :key="item.id" class="queue-card" draggable="true" @dragstart="draggedIndex=index" @dragover.prevent @drop="dropQueue(index)" :class="{legacy:!replayable(item)}" :title="replayable(item)?'明确点击后切换为点播':'旧记录缺少重播参数'" @click="resumeQueueItem(item,'history')"><div class="queue-thumb"><img v-if="item.poster" :src="item.poster" :alt="item.videoName+' 海报'"/><span v-else><AppIcon name="player-play" :size="16"/></span></div><div><strong>{{item.videoName}}</strong><small>{{item.episodeName}} · {{item.sourceName}} · {{formatTime(item.position)}} / {{formatTime(item.duration)}}</small><progress class="queue-progress" :value="item.position??0" :max="Math.max(1,item.duration??1)" :aria-label="`${item.videoName} 播放进度`"/></div></button></div><div v-else class="compact-empty">当前点播历史为空。</div></section>
       </div>
+      <div class="player-side-column">
+        <details open class="panel queue-panel">
+          <summary class="queue-summary">{{isVod?'播放队列':'点播历史'}} <small>{{queue.length}} 项</small></summary>
+          <p v-if="!isVod" class="queue-note">仅浏览，不参与当前播放。</p>
+          <div class="queue-actions">
+            <button class="text-link" :disabled="!queue.length" @click="saveQueue">保存队列</button>
+            <button class="text-link" :disabled="!queue.length" @click="clearQueue">清空并保存</button>
+            <RouterLink class="text-link" to="/history">查看全部</RouterLink>
+          </div>
+          <div v-if="queue.length" class="queue-strip">
+            <button v-for="(item,index) in queue" :key="item.id" class="queue-card" draggable="true"
+              @dragstart="draggedIndex=index" @dragover.prevent @drop="dropQueue(index)"
+              :class="{legacy:!replayable(item)}" :aria-current="item.id===currentQueueEntry?.id?'true':undefined"
+              :title="replayable(item)?'明确点击后切换为点播':'旧记录缺少重播参数'" @click="resumeQueueItem(item,'history')">
+              <div class="queue-thumb">
+                <img v-if="item.poster" :src="item.poster" alt=""/>
+                <span v-else><AppIcon name="player-play" :size="16"/></span>
+              </div>
+              <div>
+                <strong>{{item.videoName}}</strong>
+                <small v-if="item.id===currentQueueEntry?.id">当前播放 · {{item.episodeName}}</small>
+                <small v-else>{{item.episodeName}} · {{item.sourceName}} · {{formatTime(item.position)}} / {{formatTime(item.duration)}}</small>
+                <progress class="queue-progress" :value="item.position??0" :max="Math.max(1,item.duration??1)" :aria-label="`${item.videoName} 播放进度`"/>
+              </div>
+            </button>
+          </div>
+          <div v-else class="compact-empty">当前点播历史为空。</div>
+        </details>
       <aside class="panel playback-info"><div class="panel-heading"><div><span class="panel-kicker">播放信息</span><h2>媒体与运行状态</h2></div></div><dl class="info-list"><div><dt>播放域 / 会话</dt><dd>{{actualDomain??'—'}} / {{runtimeSession.requestId.slice(0,8)||'—'}}</dd></div><div><dt>播放位置</dt><dd>{{formatTime(stats?.position)}} / {{formatTime(stats?.duration)}}</dd></div><div><dt>容器 / 视频</dt><dd>{{stats?.containerFormat||'—'}} / {{stats?.videoFormat||'—'}}</dd></div><div><dt>分辨率 / 帧率</dt><dd>{{resolution}} / {{stats?.fps?stats.fps.toFixed(2)+' fps':'—'}}</dd></div><div><dt>视频码率</dt><dd>{{formatRate(stats?.videoBitrate)}}</dd></div><div><dt>音频</dt><dd>{{stats?.audioFormat||'—'}} · {{stats?.audioChannels||'—'}} ch · {{stats?.sampleRate?Math.round(stats.sampleRate/1000)+' kHz':'—'}}</dd></div><div><dt>音频码率</dt><dd>{{formatRate(stats?.audioBitrate)}}</dd></div><div><dt>硬件解码</dt><dd>{{stats?.hwdec||'—'}}</dd></div><div><dt>缓存</dt><dd>{{stats?formatBytes(stats.cacheBytes)+' / '+formatBytes(stats.cacheMaxBytes)+' · '+stats.cacheDuration.toFixed(1)+' 秒':'—'}}</dd></div><div><dt>画面窗口</dt><dd>{{videoSurfaceMessage}}</dd></div><div><dt>显示模式</dt><dd>{{actualDomain==='music'?'音频':fullscreen?'全屏':pip?'画中画':'嵌入'}}</dd></div><div><dt>来源 / 片源</dt><dd>{{isVod?(currentQueueEntry?.sourceName??'—'):'—'}} / {{isVod?(currentQueueEntry?.episodeName??'—'):'—'}}</dd></div><div><dt>文件大小</dt><dd>{{formatBytes(stats?.fileSize)}}</dd></div><div class="path-row"><dt>媒体路径</dt><dd :title="stats?.path??''">{{stats?.path||'—'}}</dd></div></dl><div class="runtime-box"><strong>PlayerHost 运行信息</strong><small>应用 V{{diagnostics.appVersion??'—'}} · {{diagnostics.architecture??'x64'}}</small><small>libmpv：{{String(diagnostics.libmpv??'—').split(';')[0]}}</small><small>GPU：{{String(diagnostics.gpu??'—').slice(0,64)}}</small><small>视频尺寸就绪与真实呈现首帧分开统计；当前不伪报首帧时间</small><small>编译运行时：MSVC 2022 (x64)</small><small>平台：Windows {{diagnostics.windowsBuild??'—'}} · {{diagnostics.architecture??'x64'}}</small></div><div class="advanced-player-controls"><label>画面比例<select v-model="aspect" :disabled="actualDomain==='music'" @change="command({command:'aspect-ratio',value:aspect})"><option value="no">自动</option><option value="16:9">16:9</option><option value="4:3">4:3</option><option value="2.35:1">2.35:1</option></select></label><label>音轨<select @change="command({command:'audio-track',value:($event.target as HTMLSelectElement).value})"><option value="auto">自动</option><option v-for="track in audioTracks" :key="track.id" :value="track.id">{{track.title||track.language||track.id}}</option></select></label><label>字幕轨<select :disabled="actualDomain==='music'" @change="command({command:'subtitle-track',value:($event.target as HTMLSelectElement).value})"><option value="auto">自动</option><option value="no">关闭</option><option v-for="track in subtitleTracks" :key="track.id" :value="track.id">{{track.title||track.language||track.id}}</option></select></label><label>字幕延迟<input v-model.number="subtitleDelay" :disabled="actualDomain==='music'" type="number" step="0.1" @change="command({command:'subtitle-delay',value:subtitleDelay})"/></label><label>音频延迟<input v-model.number="audioDelay" type="number" step="0.1" @change="command({command:'audio-delay',value:audioDelay})"/></label><label>外挂字幕<div class="inline-input"><input v-model="subtitlePath" :disabled="actualDomain==='music'" placeholder="C:\\Subtitles\\movie.ass"/><button :disabled="!subtitlePath||actualDomain==='music'" @click="command({command:'subtitle-add',value:subtitlePath})">加载</button></div></label></div></aside>
+      </div>
     </div>
-
   </section>
 </template>
 
 <style scoped>
 .player-stage-column{min-width:0}.playback-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-top:12px;padding:14px 16px;min-height:52px;box-sizing:border-box}.playback-status>strong{display:flex;align-items:center;gap:8px;white-space:nowrap}.playback-status i{width:9px;height:9px;border-radius:50%;background:currentColor}.playback-status>span{min-width:0;padding-left:16px;border-left:1px solid var(--line);font-size:12px}.playback-status-message{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-panel{margin-top:12px}.queue-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.queue-thumb{height:66px}.queue-card small{font-size:11px}.player-stage-column>.player-error{margin-top:12px}.good{color:var(--good)}.danger{color:var(--danger)}
-@media(max-width:760px){.queue-strip{grid-template-columns:1fr}.queue-actions{flex-wrap:wrap}.queue-panel>.panel-heading{flex-wrap:wrap;gap:10px}}
+.player-side-column{display:grid;align-content:start;gap:12px;min-width:0}
+.player-side-column .queue-panel{margin:0;min-width:0}
+.queue-summary{cursor:pointer;font-size:1.17em;font-weight:650;line-height:1.45}
+.queue-summary small{color:var(--muted);font-size:.73em;font-weight:400;float:inline-end;margin-inline-start:6px}
+.queue-note{color:var(--muted);font-size:.88em;overflow-wrap:anywhere}
+.queue-panel .queue-actions{flex-wrap:wrap;gap:4px 10px;margin-block:8px}
+.queue-panel .queue-strip{
+  grid-template-columns:minmax(0,1fr);max-height:min(350px,44vh);
+  overflow:auto;padding:4px;overscroll-behavior:contain;
+}
+.queue-panel .queue-card{min-width:0;border:1px solid var(--line);align-items:center}
+.queue-panel .queue-card[aria-current=true]{background:var(--accent-soft);border-inline-start:3px solid var(--accent-strong)}
+.queue-panel .queue-thumb{height:48px}
+.queue-card strong,.queue-card small{overflow-wrap:anywhere}
 .concept-surface{position:relative;overflow:hidden;isolation:isolate}.progress-panel{padding:10px 14px 8px;margin-top:10px}.progress-times{display:flex;justify-content:space-between;align-items:center;gap:8px;font-variant-numeric:tabular-nums;font-size:11px;color:var(--muted)}
 .progress-times .waiting{color:color-mix(in srgb,var(--muted) 62%,transparent)}
 .player-timeline{position:relative;display:flex;align-items:center;height:18px;margin-top:3px}
@@ -260,7 +300,7 @@ onBeforeUnmount(()=>{tracksRefresh=undefined;allowSurfaceSync=false;removeAfterN
 .tl-input:disabled{cursor:default}
 .player-timeline:focus-within .tl-rail{outline:2px solid var(--accent);outline-offset:3px}
 .buffer-hint{color:var(--muted)}
-.switch-overlay{position:absolute;inset:0;z-index:6;display:grid;place-items:center;background:color-mix(in srgb,var(--canvas) 88%,transparent);backdrop-filter:blur(3px)}
+.switch-overlay{position:absolute;inset:0;z-index:6;display:grid;place-items:center;background:color-mix(in srgb,var(--canvas) 94%,transparent)}
 .switch-card{display:grid;gap:5px;max-width:min(440px,82%);padding:18px 24px 20px;text-align:center;border:1px solid var(--line);border-radius:var(--radius-l);background:var(--surface);box-shadow:var(--shadow-md)}
 .switch-card strong{font-family:"Iowan Old Style","STSong",serif;font-size:17px;line-height:1.3}
 .switch-card small{color:var(--muted);font-size:11.5px}

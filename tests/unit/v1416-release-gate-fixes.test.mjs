@@ -12,8 +12,8 @@ test('v1.4.16 release gates keep child routes and session-safe stats',async()=>{
   const main=await read('apps/desktop/src/main/index.ts');
   const player=await read('apps/desktop/src/main/player-client.ts');
   const manifest=await read('package.json');
-  assert.match(main,/function createWindow\(route\?:string,primary=true\)/);
-  assert.match(main,/loadFile\([^\n]+route\?\{hash:route\}:undefined\)/);
+  assert.match(main,/function createWindow\(route\?:\s*string,\s*primary\s*=\s*true\)/);
+  assert.match(main,/loadFile\([^\n]+route\s*\?\s*\{\s*hash:\s*route\s*\}\s*:\s*undefined\)/);
   assert.match(main,/createWindow\(route,false\)/);
   assert.match(main,/trayIconPath\(\)/);
   assert.ok(manifest.includes('"from": "assets/tray-icon.png"'));

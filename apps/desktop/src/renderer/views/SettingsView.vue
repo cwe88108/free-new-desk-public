@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed,nextTick,onBeforeUnmount,onMounted,ref } from 'vue';
+import { computed,nextTick,onBeforeUnmount,onMounted,ref,watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { ACCENT_CHOICES,accentIdFromStorage,applyAccentToDocument,persistAccent,type AccentId } from '../ui-accent';
+import { ACCENTS, SEASONS, appearance, saveAppearance } from '../appearance';
 import { useToastStore } from '../stores/toast';
 
 const toast=useToastStore();
@@ -18,8 +18,8 @@ const diagnostics=ref<Record<string,string|number|boolean>>({});
 const reservations=ref<ProgramReservation[]>([]);
 const cacheStats=ref<CacheStats>({bytes:0,files:0,maxBytes:0,namespaces:[]});
 const events=ref<DiagnosticEvent[]>([]);
-const theme=ref('system');
-const fontScale=ref('1');
+const fontScale=ref(1);
+watch(appearance, values => { fontScale.value = Number(values['ui.fontScale']); }, { immediate: true });
 const showAllReservations=ref(false);
 const cacheLimit=ref(String(1024*1024*1024));
 const message=ref('');
@@ -48,17 +48,18 @@ const cachePercent=computed(()=>cacheStats.value.maxBytes?Math.min(100,Math.roun
 const activeReservations=computed(()=>reservations.value.filter(item=>Date.parse(item.start)>Date.now()-2*60*60*1000));const shownReservations=computed(()=>{const sorted=[...reservations.value].sort((a,b)=>Date.parse(b.start)-Date.parse(a.start));return showAllReservations.value?sorted:sorted.filter(item=>Date.parse(item.start)>Date.now()-24*60*60*1000).slice(0,8);});const reservationConflicts=computed(()=>{const sorted=[...activeReservations.value].sort((a,b)=>Date.parse(a.start)-Date.parse(b.start));const ids=new Set<string>();for(let i=1;i<sorted.length;i++){const prev=sorted[i-1],cur=sorted[i];if(prev&&cur&&Math.abs(Date.parse(cur.start)-Date.parse(prev.start))<30*60*1000){ids.add(prev.id);ids.add(cur.id);}}return ids;});const filteredEvents=computed(()=>events.value.filter(item=>(item.level+' '+item.category+' '+item.message).toLowerCase().includes(eventFilter.value.trim().toLowerCase())));const lastCheck=computed(()=>settings.value['update.lastCheck']?new Date(settings.value['update.lastCheck']).toLocaleString():'尚未检查');
 function formatBytes(value:number){if(value<=0)return'0 B';const units=['B','KB','MB','GB'];let n=value,i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+units[i];}
 function namespaceLabel(value:string){const labels:Record<string,string>={image:'图片缓存',images:'图片缓存',epg:'EPG 节目单',http:'网络请求',source:'来源数据',proxy:'代理数据'};return labels[value]??value;}
-function applyTheme(value:string){const resolved=value==='dark'||(value==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';document.documentElement.style.colorScheme=resolved;document.documentElement.dataset.themePreference=value;document.documentElement.dataset.theme=resolved;applyAccentToDocument();}
-const accentId=ref<AccentId>(accentIdFromStorage());
-async function saveAccent(id:AccentId){accentId.value=id;await persistAccent(id);applyAccentToDocument();message.value='强调色已保存并应用';toast.success('强调色已更新',message.value);}
-const fontScaleNumber=computed({get:()=>Number(fontScale.value)||1,set:(value:number)=>{fontScale.value=String(Number(value.toFixed(2)));}});
-function onFontScaleInput(){void saveFontScale();}
-function scrollToSection(id:string){document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
-function applyFontScale(value:string){const parsed=Number(value);const scale=Number.isFinite(parsed)?Math.max(.9,Math.min(1.5,parsed)):1;document.documentElement.style.setProperty('--font-scale',String(scale));}
+async function updateAppearance<K extends keyof typeof appearance.value>(key: K, value: (typeof appearance.value)[K]) {
+  try {
+    await saveAppearance(key, value);
+    message.value = '外观设置已保存';
+  } catch (error) {
+    fontScale.value = Number(appearance.value['ui.fontScale']);
+    message.value = settingFailure(error);
+  }
+}
+function scrollToSection(id:string){document.getElementById(id)?.scrollIntoView({behavior:appearance.value['ui.effects']==='lite'||matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}
 function parseLastUpdate(value:string|undefined):UpdateInfo|null{if(!value)return null;try{const item=JSON.parse(value) as UpdateInfo;return item&&typeof item.current==='string'&&typeof item.latest==='string'?item:null;}catch{return null;}}
-async function load(){busy.value=true;try{const [appInfo,settingValues,diag,reservationValues,cacheValues,eventValues,authorization]=await Promise.all([window.desktop.app.getInfo(),window.desktop.settings.list(),window.desktop.diagnostics.get(),window.desktop.reservation.list(),window.desktop.cache.stats(),window.desktop.diagnostics.events(24),window.desktop.update.authorization()]);info.value=appInfo;githubAuthorization.value=authorization;settings.value=settingValues;diagnostics.value=diag;reservations.value=reservationValues;cacheStats.value=cacheValues;events.value=eventValues;theme.value=settings.value.theme??'system';applyTheme(theme.value);fontScale.value=settings.value['ui.fontScale']??'1';applyFontScale(fontScale.value);cacheLimit.value=settings.value['cache.maxBytes']??String(cacheStats.value.maxBytes||1024*1024*1024);updateChannel.value=settings.value['update.channel']==='daily'?'daily':'stable';autoCheck.value=settings.value['update.autoCheck']!=='false';updateSchedule.value=(settings.value['update.schedule']==='weekly'?'weekly':settings.value['update.schedule']==='off'?'off':'daily');updateInfo.value=settings.value['update.lastError']?null:parseLastUpdate(settings.value['update.lastResult']);autoNext.value=settings.value['player.autoNext']!=='false';liveAutoFallback.value=settings.value['live.autoFallback']!=='false';proxyMode.value=settings.value['network.proxyMode']==='direct'?'direct':'proxy';const timeoutRaw=Number(settings.value['network.timeoutSeconds']);timeoutSeconds.value=Number.isFinite(timeoutRaw)&&timeoutRaw>=3&&timeoutRaw<=120?timeoutRaw:15;const persistedVolume=Number(localStorage.getItem('player.volume'));defaultVolume.value=Number.isFinite(persistedVolume)&&localStorage.getItem('player.volume')!==null?Math.min(100,Math.max(0,persistedVolume)):80;}catch(error){message.value='读取设置失败：'+(error instanceof Error?error.message:String(error));}finally{busy.value=false;}}
-async function saveTheme(){const previous=settings.value.theme??'system',next=theme.value;if(await writeSetting('theme',next)){applyTheme(next);message.value='主题设置已保存并应用';toast.success('主题已更新',message.value);}else{theme.value=previous;applyTheme(previous);}}
-async function saveFontScale(){const previous=settings.value['ui.fontScale']??'1',next=fontScale.value;if(await writeSetting('ui.fontScale',next)){applyFontScale(next);message.value='界面字号已保存并应用';toast.success('字号已更新',message.value);}else{fontScale.value=previous;applyFontScale(previous);}}
+async function load(){busy.value=true;try{const [appInfo,settingValues,diag,reservationValues,cacheValues,eventValues,authorization]=await Promise.all([window.desktop.app.getInfo(),window.desktop.settings.list(),window.desktop.diagnostics.get(),window.desktop.reservation.list(),window.desktop.cache.stats(),window.desktop.diagnostics.events(24),window.desktop.update.authorization()]);info.value=appInfo;githubAuthorization.value=authorization;settings.value=settingValues;diagnostics.value=diag;reservations.value=reservationValues;cacheStats.value=cacheValues;events.value=eventValues;cacheLimit.value=settings.value['cache.maxBytes']??String(cacheStats.value.maxBytes||1024*1024*1024);updateChannel.value=settings.value['update.channel']==='daily'?'daily':'stable';autoCheck.value=settings.value['update.autoCheck']!=='false';updateSchedule.value=(settings.value['update.schedule']==='weekly'?'weekly':settings.value['update.schedule']==='off'?'off':'daily');updateInfo.value=settings.value['update.lastError']?null:parseLastUpdate(settings.value['update.lastResult']);autoNext.value=settings.value['player.autoNext']!=='false';liveAutoFallback.value=settings.value['live.autoFallback']!=='false';proxyMode.value=settings.value['network.proxyMode']==='direct'?'direct':'proxy';const timeoutRaw=Number(settings.value['network.timeoutSeconds']);timeoutSeconds.value=Number.isFinite(timeoutRaw)&&timeoutRaw>=3&&timeoutRaw<=120?timeoutRaw:15;const persistedVolume=Number(localStorage.getItem('player.volume'));defaultVolume.value=Number.isFinite(persistedVolume)&&localStorage.getItem('player.volume')!==null?Math.min(100,Math.max(0,persistedVolume)):80;}catch(error){message.value='读取设置失败：'+(error instanceof Error?error.message:String(error));}finally{busy.value=false;}}
 async function saveCache(){const previous=settings.value['cache.maxBytes']??String(cacheStats.value.maxBytes||1024*1024*1024),next=cacheLimit.value;if(!/^\d+$/.test(next)||Number(next)<64*1024*1024){message.value='缓存容量至少需要 64 MB';cacheLimit.value=previous;return;}if(await writeSetting('cache.maxBytes',next)){cacheStats.value=await window.desktop.cache.stats();message.value='缓存容量已保存';}else cacheLimit.value=previous;}
 async function clearCache(namespace?:string){if(!namespace&&!window.confirm('确认清理全部缓存？图片、EPG 与网络缓存将被清空，来源与收藏不受影响。'))return;try{const ok=await window.desktop.cache.clear(namespace);if(!ok)throw new Error('缓存服务未确认清理完成');cacheStats.value=await window.desktop.cache.stats();message.value=namespace?`${namespaceLabel(namespace)}已清理`:'全部缓存已清理';}catch(error){message.value='清理失败：'+(error instanceof Error?error.message:String(error));}}
 async function saveUpdatePrefs(){const ok=await writeSettingsBatch([['update.channel',updateChannel.value],['update.autoCheck',String(updateSchedule.value!=='off')],['update.schedule',updateSchedule.value]]);if(!ok){updateChannel.value=settings.value['update.channel']==='daily'?'daily':'stable';updateSchedule.value=settings.value['update.schedule']==='weekly'?'weekly':settings.value['update.schedule']==='off'?'off':'daily';autoCheck.value=settings.value['update.autoCheck']!=='false';return;}autoCheck.value=updateSchedule.value!=='off';message.value=`更新设置已保存：${updateChannel.value==='daily'?'每日通道':'稳定版'} · ${updateSchedule.value==='off'?'关闭自动检查':updateSchedule.value==='weekly'?'每周检查':'每日检查'}`;}
@@ -115,7 +116,38 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',dialogEscape);});
 
       <div class="settings-body">
     <div class="settings-card-grid">
-      <article id="sec-appearance" class="setting-card"><span class="panel-kicker">外观</span><h2>主题</h2><div class="segmented"><button :class="{active:theme==='system'}" @click="theme='system';saveTheme()">系统</button><button :class="{active:theme==='light'}" @click="theme='light';saveTheme()">浅色</button><button :class="{active:theme==='dark'}" @click="theme='dark';saveTheme()">深色</button></div><div class="accent-row"><span class="accent-label">强调色</span><button v-for="choice in ACCENT_CHOICES" :key="choice.id" class="accent-swatch" :class="{on:accentId===choice.id}" :style="{background:choice.preview}" :aria-label="`强调色 ${choice.label}`" :title="choice.label" @click="saveAccent(choice.id)"/></div><label class="font-scale-line">界面字号<input type="range" min="0.9" max="1.5" step="0.05" v-model.number="fontScaleNumber" aria-label="界面字号缩放" @change="onFontScaleInput"/><b class="inline-value">{{Math.round(Number(fontScale)*100)}}%</b></label></article>
+      <article id="sec-appearance" class="setting-card">
+        <h2>主题</h2>
+        <div class="season-options" role="group" aria-label="四季主题">
+          <button v-for="choice in SEASONS" :key="choice.id" class="season-option"
+            :aria-pressed="appearance['ui.season']===choice.id" @click="updateAppearance('ui.season',choice.id)">
+            <span class="season-colors" aria-hidden="true">
+              <i v-for="color in choice.palette" :key="color" :style="{background:color}"/>
+            </span>
+            <span>{{choice.name}}</span>
+          </button>
+        </div>
+        <div class="segmented" role="group" aria-label="明暗">
+          <button v-for="mode in (['system','light','dark'] as const)" :key="mode"
+            :class="{active:appearance.theme===mode}" :aria-pressed="appearance.theme===mode"
+            @click="updateAppearance('theme',mode)">{{{system:'跟随系统',light:'浅色',dark:'深色'}[mode]}}</button>
+        </div>
+        <div class="segmented" role="group" aria-label="界面效果">
+          <button :class="{active:appearance['ui.effects']==='standard'}" :aria-pressed="appearance['ui.effects']==='standard'" @click="updateAppearance('ui.effects','standard')">标准效果</button>
+          <button :class="{active:appearance['ui.effects']==='lite'}" :aria-pressed="appearance['ui.effects']==='lite'" @click="updateAppearance('ui.effects','lite')">轻量效果</button>
+        </div>
+        <div class="accent-row" role="group" aria-label="强调色">
+          <button class="secondary-button" :aria-pressed="appearance['ui.accentChoice']==='season'" @click="updateAppearance('ui.accentChoice','season')">随季节</button>
+          <button v-for="(choice,id) in ACCENTS" :key="id" class="accent-swatch"
+            :class="{on:appearance['ui.accentChoice']===id}" :aria-pressed="appearance['ui.accentChoice']===id"
+            :style="{background:choice.light[0]}" :aria-label="`强调色 ${choice.label}`"
+            :title="choice.label" @click="updateAppearance('ui.accentChoice',id)"/>
+        </div>
+        <label class="font-scale-line">界面字号
+          <input type="range" min="0.9" max="1.5" step="0.05" v-model.number="fontScale" @change="updateAppearance('ui.fontScale',String(fontScale))"/>
+          <b class="inline-value">{{Math.round(fontScale*100)}}%</b>
+        </label>
+      </article>
 
       <article id="sec-playback" class="setting-card"><span class="panel-kicker">播放</span><h2>播放行为</h2><label>新会话默认音量<input type="range" min="0" max="100" v-model.number="defaultVolume" aria-label="默认音量" @change="persistDefaultVolume"/><b class="inline-value">{{defaultVolume}}</b></label><label class="check-line"><input type="checkbox" :checked="autoNext" @change="saveAutoNext"/>播完自动播放下一集</label><label class="check-line"><input type="checkbox" :checked="liveAutoFallback" @change="saveLiveFallback"/>直播失败自动切换线路</label></article>
 
@@ -163,7 +195,12 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',dialogEscape);});
 .accent-label{font-size:12px;color:var(--muted)}
 .accent-swatch{width:24px;height:24px;border-radius:8px;border:2px solid transparent;padding:0}
 .accent-swatch.on{border-color:var(--text);box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--line)}
-.accent-swatch:hover{transform:translateY(-1px)}
+.season-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,114px),1fr));gap:8px;margin:12px 0}
+.season-option{display:flex;align-items:center;gap:8px;min-width:0;text-align:left;min-height:38px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.season-option[aria-pressed=true],.accent-row>button[aria-pressed=true]:not(.accent-swatch){border-color:var(--accent-strong);background:var(--accent-soft)}
+.season-colors{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;flex:none}
+.season-colors i{width:9px;height:18px}
+.accent-row,.segmented{flex-wrap:wrap}
 .font-scale-line{display:grid;gap:6px}
 .font-scale-line input[type=range]{width:100%}
 @media(max-width:1180px){.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;flex-direction:row;flex-wrap:wrap}}

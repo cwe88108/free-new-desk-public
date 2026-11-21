@@ -2,7 +2,8 @@
 import { computed,nextTick,onBeforeUnmount,onMounted,ref,watch } from 'vue';
 import { useRoute,useRouter } from 'vue-router';
 import { useToastStore } from '../stores/toast';
-import { applyAccentToDocument } from '../ui-accent';
+import { SEASONS, saveAppearance } from '../appearance';
+import { setNativeSurfaceOccluded } from '../native-surface';
 
 interface Command{id:string;group:string;label:string;hint?:string;keywords:string;run:()=>void|Promise<void>;}
 
@@ -10,6 +11,8 @@ const router=useRouter();
 const route=useRoute();
 const toast=useToastStore();
 const open=ref(false);
+watch(open, value => setNativeSurfaceOccluded('command-palette', value));
+onBeforeUnmount(() => setNativeSurfaceOccluded('command-palette', false));
 const query=ref('');
 const cursor=ref(0);
 const input=ref<HTMLInputElement|null>(null);
@@ -17,7 +20,15 @@ const listEl=ref<HTMLElement|null>(null);
 
 function focusPageSearch(){const input=document.querySelector<HTMLElement>('.content [data-search-input]:not([disabled])');if(input){input.focus();input.scrollIntoView({block:'nearest'});return true;}return false;}
 
-async function applyTheme(next:'light'|'dark'|'system'){const resolved=next==='dark'||(next==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';document.documentElement.style.colorScheme=resolved;document.documentElement.dataset.themePreference=next;document.documentElement.dataset.theme=resolved;applyAccentToDocument();try{await window.desktop.settings.set('theme',next);}catch{/* 设置落库失败不阻断预览 */}}
+async function applyTheme(next:'light'|'dark'|'system'){
+  try {
+    await saveAppearance('theme',next);
+    toast.success('明暗偏好已更新');
+    close();
+  } catch (error) {
+    toast.error('保存明暗偏好失败',String(error));
+  }
+}
 
 const commands=computed<Command[]>(()=>[
   {id:'nav-home',group:'跳转',label:'首页',hint:'G H',keywords:'home shouye',run:()=>void router.push('/')},
@@ -31,8 +42,13 @@ const commands=computed<Command[]>(()=>[
   {id:'nav-sources',group:'跳转',label:'来源管理',hint:'G U',keywords:'sources laiyuan import',run:()=>void router.push('/sources')},
   {id:'nav-settings',group:'跳转',label:'设置与诊断',hint:'G D',keywords:'settings shezhi',run:()=>void router.push('/settings')},
   {id:'act-find',group:'当前页动作',label:'聚焦本页搜索框',hint:'Ctrl F',keywords:'find search focus',run:()=>{if(!focusPageSearch())toast.info('本页没有搜索框','可前往点播、搜索或收藏页使用。');close();}},
-  {id:'act-theme-light',group:'外观',label:'切换到浅色主题',keywords:'theme light qianse yang',run:async()=>{await applyTheme('light');toast.success('已切换到浅色主题');close();}},
-  {id:'act-theme-dark',group:'外观',label:'切换到深色主题',keywords:'theme dark anse mo',run:async()=>{await applyTheme('dark');toast.success('已切换到深色主题');close();}},
+  {id:'act-theme-light',group:'外观',label:'使用浅色外观',keywords:'theme light qianse yang',run:()=>applyTheme('light')},
+  {id:'act-theme-dark',group:'外观',label:'使用深色外观',keywords:'theme dark anse mo',run:()=>applyTheme('dark')},
+  {id:'act-theme-system',group:'外观',label:'跟随系统明暗',keywords:'theme system',run:()=>applyTheme('system')},
+  ...SEASONS.map(choice=>({id:'season-'+choice.id,group:'外观',label:choice.name,keywords:'theme '+choice.id,run:async()=>{
+    try { await saveAppearance('ui.season',choice.id); close(); }
+    catch(error) { toast.error('保存主题失败',String(error)); }
+  }})),
   {id:'act-update',group:'系统',label:'检查应用更新',keywords:'update gengxin check',run:async()=>{close();await router.push('/settings?section=update');}},
   {id:'act-diag',group:'系统',label:'打开诊断中心',keywords:'diagnostics zhenduan log',run:async()=>{close();await router.push('/settings?section=diagnostics');}}
 ]);

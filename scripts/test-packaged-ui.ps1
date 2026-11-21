@@ -22,9 +22,17 @@ using System;
 using System.Runtime.InteropServices;
 public static class NativeUiSmoke {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO {
+    public int Size;
+    public RECT Monitor;
+    public RECT Work;
+    public uint Flags;
+  }
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
   [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
@@ -94,6 +102,7 @@ if ($env:FND_CAPTURE_IMAGES -ne '0') {
   New-Item -ItemType Directory -Force -Path $captureDir | Out-Null
 }
 $process = $null
+$primaryError = $null
 $previousSmoke = $env:FND_UI_SMOKE
 try {
   $env:FND_UI_SMOKE = '1'
@@ -139,7 +148,17 @@ try {
         if (-not [NativeUiSmoke]::GetWindowRect($process.MainWindowHandle, [ref]$mainRect)) { throw "Unable to read main window geometry at $key" }
         $mainWidth = $mainRect.Right - $mainRect.Left
         $mainHeight = $mainRect.Bottom - $mainRect.Top
-        if ($mainWidth -lt 1280 -or $mainHeight -lt 720) { throw "Main window violated its 1280x720 minimum geometry at scale $dpiScale on ${key}: actual ${mainWidth}x${mainHeight}" }
+        $monitor = [NativeUiSmoke]::MonitorFromWindow($process.MainWindowHandle, 2)
+        $monitorInfo = New-Object NativeUiSmoke+MONITORINFO
+        $monitorInfo.Size = [Runtime.InteropServices.Marshal]::SizeOf($monitorInfo)
+        if (-not [NativeUiSmoke]::GetMonitorInfo($monitor, [ref]$monitorInfo)) { throw "Unable to read the display work area at $key" }
+        $work = $monitorInfo.Work
+        $tolerance = [Math]::Ceiling(12 * [double]$dpiScale)
+        if ($mainWidth -le 0 -or $mainHeight -le 0 -or $mainRect.Left -lt $work.Left - $tolerance -or
+            $mainRect.Top -lt $work.Top - $tolerance -or $mainRect.Right -gt $work.Right + $tolerance -or
+            $mainRect.Bottom -gt $work.Bottom + $tolerance) {
+          throw "Main window escaped the display work area at scale $dpiScale on ${key}: actual ${mainWidth}x${mainHeight}"
+        }
         foreach ($nativePlayer in $visibleNativePlayers) {
           $playerRect = New-Object NativeUiSmoke+RECT
           if (-not [NativeUiSmoke]::GetWindowRect($nativePlayer, [ref]$playerRect)) { throw 'Unable to read player-host geometry.' }
@@ -160,6 +179,9 @@ try {
     }
   }
   throw "Packaged UI smoke made no progress before the watchdog expired. Last title: '$lastTitle'; captured: $([string]::Join(',', $seen))"
+} catch {
+  $primaryError = $_
+  throw
 } finally {
   if ($null -eq $previousSmoke) { Remove-Item Env:FND_UI_SMOKE -ErrorAction SilentlyContinue } else { $env:FND_UI_SMOKE = $previousSmoke }
   # Flush is requested by the renderer only after the measured operation settles.
@@ -190,12 +212,17 @@ try {
   }
   if ($collectorExitCode -ne 0) { Write-Warning 'Surface timing evidence is incomplete or collection failed. Inspect the surface-evidence report; a flush ACK alone does not prove collection.' }
   $performanceFiles = @(Get-ChildItem -LiteralPath $smokeDir -Filter 'performance-runtime.json' -Recurse -File -ErrorAction SilentlyContinue)
-  if ($performanceFiles.Count -ne 1) { throw 'Expected exactly one sanitized performance-runtime.json from the packaged UI smoke.' }
-  $performance = Get-Content -LiteralPath $performanceFiles[0].FullName -Raw | ConvertFrom-Json
-  if ($performance.schemaVersion -ne 1 -or $performance.workload -ne 'packaged-ui-smoke-v1' -or $performance.durationMs -le 0) { throw 'Packaged UI performance telemetry envelope is invalid.' }
-  if ($performance.counters.playbackStatsIpcCalls -le 0 -or $performance.uiMetrics.navigationMs.count -lt 8 -or $performance.uiMetrics.rendererFrameP95Ms.count -lt 1) { throw 'Packaged UI performance telemetry is missing navigation, playback IPC, or frame samples.' }
-  $performanceOutput = Join-Path $captureDir ($capturePrefix + '-performance.json')
-  Copy-Item -LiteralPath $performanceFiles[0].FullName -Destination $performanceOutput -Force
-  Write-Host ("Performance evidence: durationMs={0}, playbackStatsIpcCalls={1}, playerHostStatsQueryCalls={2}, navigationP95Ms={3}, frameP95Ms={4}, frameOver33MsRate={5}" -f $performance.durationMs, $performance.counters.playbackStatsIpcCalls, $performance.counters.playerHostStatsQueryCalls, $performance.uiMetrics.navigationMs.p95, $performance.uiMetrics.rendererFrameP95Ms.p95, $performance.uiMetrics.rendererFrameOver33MsRate.p95)
+  try {
+    if ($performanceFiles.Count -ne 1) { throw 'Expected exactly one sanitized performance-runtime.json from the packaged UI smoke.' }
+    $performance = Get-Content -LiteralPath $performanceFiles[0].FullName -Raw | ConvertFrom-Json
+    if ($performance.schemaVersion -ne 1 -or $performance.workload -ne 'packaged-ui-smoke-v1' -or $performance.durationMs -le 0) { throw 'Packaged UI performance telemetry envelope is invalid.' }
+    if ($performance.counters.playbackStatsIpcCalls -le 0 -or $performance.uiMetrics.navigationMs.count -lt 8 -or $performance.uiMetrics.rendererFrameP95Ms.count -lt 1) { throw 'Packaged UI performance telemetry is missing navigation, playback IPC, or frame samples.' }
+    $performanceOutput = Join-Path $captureDir ($capturePrefix + '-performance.json')
+    Copy-Item -LiteralPath $performanceFiles[0].FullName -Destination $performanceOutput -Force
+    Write-Host ("Performance evidence: durationMs={0}, playbackStatsIpcCalls={1}, playerHostStatsQueryCalls={2}, navigationP95Ms={3}, frameP95Ms={4}, frameOver33MsRate={5}" -f $performance.durationMs, $performance.counters.playbackStatsIpcCalls, $performance.counters.playerHostStatsQueryCalls, $performance.uiMetrics.navigationMs.p95, $performance.uiMetrics.rendererFrameP95Ms.p95, $performance.uiMetrics.rendererFrameOver33MsRate.p95)
+  } catch {
+    if (-not $primaryError) { throw }
+    Write-Warning $_.Exception.Message
+  }
   Write-Host "Smoke data retained for diagnosis: $smokeDir"
 }

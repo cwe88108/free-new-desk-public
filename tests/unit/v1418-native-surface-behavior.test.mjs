@@ -9,11 +9,11 @@ import {parse} from '@vue/compiler-sfc';
 const root=new URL('../../',import.meta.url);
 const bounds={x:20,y:40,width:640,height:360};
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};}
-async function harness(control=async()=>({ok:true})){
+async function harness(control=async()=>({ok:true}),rollback={}){
   const calls=[],runtimeListeners=[],context=vm.createContext({crypto:{randomUUID},performance,console});
   context.document={documentElement:{dataset:{}}};
   context.localStorage={getItem:()=>null};
-  context.window={devicePixelRatio:1,desktop:{diagnostics:{recordPerformance:async()=>true},playback:{
+  context.window={devicePixelRatio:1,desktop:{rollback,diagnostics:{recordPerformance:async()=>true},playback:{
     control:async command=>{calls.push({...command});return control(command);},onFullscreenChanged:()=>()=>{},
     onRuntimeSessionChanged:listener=>{runtimeListeners.push(listener);return()=>{};},
   }}};
@@ -26,6 +26,24 @@ async function harness(control=async()=>({ok:true})){
   const surface=await load(await readFile(new URL('apps/desktop/src/renderer/native-surface.ts',root),'utf8'));
   return{calls,context,load,surface,runtime:value=>runtimeListeners.forEach(listener=>listener(value))};
 }
+
+test('native occlusion rollback skips panel hiding while keeping clipped surfaces hidden',async()=>{
+  const standard=await harness(),legacy=await harness(undefined,{nativeOcclusion:true});
+  for(const [h,visibleBehindPanel] of [[standard,false],[legacy,true]]){
+    h.context.window.document={querySelector:()=>({getBoundingClientRect:()=>({left:0,top:0,right:660,bottom:500})})};
+    const lease=h.surface.createNativeSurfaceLease('player');
+    await lease.sync(bounds);
+    h.surface.setNativeSurfaceOccluded('menu',true);
+    await lease.restore();
+    assert.equal(h.calls.at(-1).visible,visibleBehindPanel);
+    h.surface.setNativeSurfaceOccluded('menu',false);
+    await lease.restore();
+    assert.equal(h.calls.at(-1).visible,true);
+    await lease.sync({...bounds,x:22});
+    assert.equal(h.calls.at(-1).visible,false);
+    await lease.release();
+  }
+});
 
 test('surface reclaim sends show again after another owner releases identical geometry',async()=>{
   const {surface,calls}=await harness();

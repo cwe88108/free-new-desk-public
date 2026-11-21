@@ -50,7 +50,7 @@ const unhealthySources=computed(()=>Math.max(0,enabledSources.value-healthySourc
 const resumeItem=computed(()=>recent.value.find(item=>item.flag!==undefined&&item.episodeId));
 const nextReservations=computed(()=>reservations.value.filter(item=>Date.parse(item.start)>=Date.now()).sort((a,b)=>a.start.localeCompare(b.start)).slice(0,3));
 const sourceScore=computed(()=>health.value.length?Math.round(health.value.reduce((sum,item)=>sum+item.score,0)/health.value.length):0);
-const recentCards=computed(()=>recent.value.slice(0,4));
+const recentCards=computed(()=>recent.value.filter(item=>item.id!==resumeItem.value?.id).slice(0,4));
 const favoriteCards=computed(()=>vodFavorites.value.slice(0,5));
 const greeting=computed(()=>{const hour=new Date().getHours();if(hour<5)return'夜深了';if(hour<11)return'早上好';if(hour<14)return'午间安好';if(hour<18)return'下午好';return'晚间安好';});
 function parseImports(settings:Record<string,string>):ImportRecord[]{try{const value=JSON.parse(settings['imports.recent']??'[]') as unknown;return Array.isArray(value)?value.filter((item):item is ImportRecord=>Boolean(item&&typeof item==='object'&&typeof(item as ImportRecord).name==='string'&&typeof(item as ImportRecord).importedAt==='string')).slice(0,6):[];}catch{return[];}}
@@ -92,7 +92,7 @@ onMounted(loadDashboard);
     <div class="greet-row">
       <div>
         <h1>{{greeting}}，看点什么？</h1>
-        <p class="greet-sub"><template v-if="resumeItem"><b>{{resumeItem.videoName}}</b> {{resumeItem.episodeName}} 看到第 {{Math.round(progress(resumeItem)*100)}}%，随时继续。</template><template v-else>从真实播放会话、来源检测与预约中汇总当前状态。</template></p>
+        <p class="greet-sub"><template v-if="resumeItem"><b :title="resumeItem.videoName">{{resumeItem.videoName}}</b> {{resumeItem.episodeName}} 看到第 {{Math.round(progress(resumeItem)*100)}}%，随时继续。</template><template v-else>从真实播放会话、来源检测与预约中汇总当前状态。</template></p>
       </div>
       <div class="toolbar-group">
         <RouterLink class="secondary-button" to="/search"><AppIcon name="nav-search" :size="15"/> 搜索</RouterLink>
@@ -106,6 +106,17 @@ onMounted(loadDashboard);
     <section class="home-portal">
       <div class="portal-main">
         <div class="sec-head"><h2>继续观看</h2><RouterLink class="text-link" to="/history">全部历史<AppIcon name="action-enter" :size="13"/></RouterLink></div>
+        <article v-if="resumeItem" class="featured-resume">
+          <img v-if="resumeItem.poster" :src="resumeItem.poster" alt="" decoding="async"/>
+          <div class="featured-resume-copy">
+            <h3 :title="resumeItem.videoName">{{resumeItem.videoName}}</h3>
+            <p v-if="resumeItem.episodeName!==resumeItem.videoName" :title="resumeItem.episodeName">{{resumeItem.episodeName}}</p>
+            <p>已看 {{formatDuration(resumeItem.position)}} · {{Math.round(progress(resumeItem)*100)}}%</p>
+            <button class="secondary-button" :disabled="resuming||!canResume(resumeItem)" @click="resume(resumeItem)">
+              <AppIcon name="player-play" :size="16"/>继续播放
+            </button>
+          </div>
+        </article>
         <div v-if="recentCards.length" class="resume-row home-module-body">
           <article v-for="item in recentCards" :key="item.id" class="resume-card">
             <RouterLink class="resume-thumb" :to="{path:'/vod',query:{...(item.sourceId?{source:item.sourceId}:{}),...(item.videoId?{video:item.videoId}:{})}}" :aria-label="`查看 ${item.videoName} 详情`">
@@ -120,7 +131,9 @@ onMounted(loadDashboard);
             </div>
           </article>
         </div>
-        <div v-else class="compact-empty home-module-body"><AppIcon name="player-play" :size="28"/>成功打开媒体后，会在这里显示真实续播进度。</div>
+        <div v-else-if="!resumeItem" class="compact-empty home-module-body">
+          <AppIcon name="player-play" :size="20"/>尚无播放记录<RouterLink class="text-link" to="/vod">浏览点播</RouterLink>
+        </div>
 
         <div class="sec-head"><h2>我的收藏</h2><RouterLink class="text-link" to="/favorites">收藏管理<AppIcon name="action-enter" :size="13"/></RouterLink></div>
         <div v-if="favoriteCards.length" class="follow-row home-module-body">
@@ -167,33 +180,43 @@ onMounted(loadDashboard);
 
 <style scoped>
 .greet-row{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px}
+.greet-row>div:first-child{min-width:0}
 .greet-row h1{font-size:calc(28px * var(--font-scale))}
-.greet-sub{margin-top:7px;color:var(--muted);line-height:1.6}
+.greet-sub{margin-top:7px;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}
 .greet-sub b{color:var(--accent-strong);font-weight:600}
 .sec-head{display:flex;align-items:baseline;justify-content:space-between;margin:0 0 11px}
 .sec-head h2{font-size:calc(18px * var(--font-scale))}
-.home-portal{--home-module-height:160px;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+.home-portal{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,23%);gap:20px;align-items:start}
+.featured-resume{--focus:#fff;isolation:isolate;position:relative;overflow:hidden;min-height:182px;border-radius:12px;background:#211f1e;color:#fff;display:flex;align-items:center;margin-bottom:10px}
+.featured-resume>img{position:absolute;right:0;inset-block:0;width:57%;height:100%;object-fit:cover;object-position:center 35%;z-index:-2}
+.featured-resume::after{position:absolute;inset:0;content:"";background:linear-gradient(90deg,#211f1e 37%,rgba(33,31,30,.8) 68%,transparent);z-index:-1}
+.featured-resume-copy{padding:18px 22px;max-width:68%;min-width:0;overflow-wrap:anywhere}
+.featured-resume h3{font-family:var(--heading-font);font-size:calc(25px * var(--font-scale));line-height:1.4}
+.greet-sub,.featured-resume h3,.featured-resume p[title]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.featured-resume p{color:#f2ede7;margin:4px 0}
+.featured-resume .secondary-button{margin-top:8px;color:#292620;background:#f5f1e9;border-color:#f5f1e9}
+.featured-resume .secondary-button:hover{background:#fff}
 .portal-main{min-width:0;display:flex;flex-direction:column;gap:6px}
 .portal-rail{display:flex;flex-direction:column;gap:12px}
 .resume-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .resume-card{border:1px solid var(--line);border-radius:var(--radius-m);background:var(--surface);box-shadow:var(--shadow);overflow:hidden;transition:transform .16s ease,box-shadow .16s ease}
 .resume-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
-.resume-thumb{position:relative;display:block;height:calc(var(--home-module-height) - 82px);background:#34322e;overflow:hidden}
+.resume-thumb{position:relative;display:block;aspect-ratio:16/9;background:#34322e;overflow:hidden}
 .resume-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .resume-fallback{position:absolute;inset:0;display:grid;place-items:center;color:#f7f2e8;font-size:20px}
 .resume-ep{position:absolute;top:8px;left:8px;right:8px;font-size:10.5px;color:#f3ecdd;background:rgba(20,18,14,.62);padding:3px 8px;border-radius:999px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .resume-progress{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.24)}
-.resume-progress i{position:absolute;left:0;top:0;bottom:0;background:var(--accent)}
+.resume-progress i{position:absolute;left:0;top:0;bottom:0;background:var(--progress-fill)}
 .resume-meta{display:flex;align-items:center;gap:8px;padding:9px 11px 10px}
 .resume-copy{min-width:0;flex:1}
 .resume-copy strong{display:block;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .resume-copy small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.play-fab{width:28px;height:28px;flex:none;border:0;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;display:grid;place-items:center}
-.play-fab:hover:not(:disabled){background:var(--accent-strong)}
+.play-fab{width:28px;height:28px;flex:none;border:0;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:10px;display:grid;place-items:center}
+.play-fab:hover:not(:disabled){box-shadow:0 0 0 2px var(--accent-soft)}
 .follow-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
 .follow-card{border:1px solid var(--line);border-radius:var(--radius-m);background:var(--surface);overflow:hidden;transition:transform .16s ease,box-shadow .16s ease}
 .follow-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
-.fposter{position:relative;display:grid;place-items:center;height:calc(var(--home-module-height) - 82px);background:var(--surface-2);overflow:hidden}
+.fposter{position:relative;display:grid;place-items:center;aspect-ratio:2/3;background:var(--surface-2);overflow:hidden}
 .fposter img{width:100%;height:100%;object-fit:cover}
 .fposter b{font:26px "Iowan Old Style","STSong",serif;color:var(--accent-strong)}
 .follow-meta{display:block;padding:8px 10px 10px}
@@ -209,13 +232,17 @@ onMounted(loadDashboard);
 .appointment-list time{font:17px "Iowan Old Style","STSong",serif;color:var(--accent-strong)}
 .appointment-list strong,.appointment-list small{display:block}
 .appointment-list small{color:var(--muted);font-size:11px}
-.reservation-badge{font-size:10px;min-width:18px;text-align:center;padding:2px 7px;border-radius:999px;background:var(--accent);color:#fff}
+.reservation-badge{font-size:10px;min-width:18px;text-align:center;padding:2px 7px;border-radius:999px;background:var(--accent);color:var(--on-accent)}
 .version-line{color:var(--muted);margin:2px 0 10px;line-height:1.55}
 .import-line{display:block;margin-top:10px;color:var(--muted)}
-.home-module-body{height:var(--home-module-height);min-height:var(--home-module-height);margin:0 0 10px;box-sizing:border-box}
-.resume-row.home-module-body,.follow-row.home-module-body{border:1px solid var(--line);border-radius:var(--radius-m);background:var(--surface);padding:12px;overflow:hidden}.compact-empty.home-module-body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;text-align:center}
-.compact-empty.home-module-body svg{color:var(--accent);background:var(--accent-soft);box-sizing:content-box;padding:14px;border-radius:50%}
-.resume-card,.follow-card{height:100%;min-width:0;box-sizing:border-box}
-@media(max-width:1180px){.home-portal{grid-template-columns:1fr}.resume-row{height:auto;grid-template-columns:repeat(2,1fr)}.follow-row{grid-template-columns:repeat(5,1fr)}}
-@media(max-width:980px){.resume-row{grid-template-columns:1fr}.follow-row{height:auto;grid-template-columns:repeat(3,1fr)}.greet-row{flex-direction:column;align-items:flex-start}}
+.home-module-body{margin:0 0 12px}
+.resume-row.home-module-body{padding:4px}
+.follow-row.home-module-body{padding:4px}
+.compact-empty.home-module-body{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;min-height:64px;padding:12px;text-align:center}
+.compact-empty.home-module-body svg{color:var(--accent-strong);flex:none}
+.resume-card,.follow-card{min-width:0}
+.resume-row{grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr))}
+.follow-row{grid-template-columns:repeat(auto-fill,minmax(min(100%,135px),1fr))}
+@container desktop-content (max-width:925px){.home-portal{grid-template-columns:minmax(0,1fr)}.portal-rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))}.greet-row{align-items:flex-start;flex-wrap:wrap}}
+@container desktop-content (max-width:530px){.featured-resume-copy{max-width:100%}.featured-resume::after{background:linear-gradient(90deg,#211f1e,rgba(33,31,30,.7))}}
 </style>

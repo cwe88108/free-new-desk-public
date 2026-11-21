@@ -43,7 +43,13 @@ async function windowSubject(){
     isDestroyed(){return this.destroyed;}
     on(){}once(){}
   }
-  const context={BrowserWindow:Window,data:undefined,restoreWindowBounds:()=>({}),appIconPath:()=>'',nativeTheme:{shouldUseDarkColors:false},process:{platform:'win32'},path:{join:(...parts)=>parts.join('/')},__dirname:'.',quitting:false,logger:{info(){},warn(){calls.push('warning');}},player:{setParentWindowHandle(){calls.push('parent');},prewarm(){calls.push('prewarm');return pending;}},mainWindow:undefined};
+  const context={
+    BrowserWindow:Window,data:undefined,desktopWindows:new Set(),
+    restoreWindowBounds:()=>({bounds:{x:0,y:0,width:1024,height:600},minimum:[800,540],maximized:false}),
+    appIconPath:()=>'',titleBarOverlay:()=>({}),process:{platform:'win32'},path:{join:(...parts)=>parts.join('/')},rollbackArguments:[],
+    __dirname:'.',quitting:false,logger:{info(){},warn(){calls.push('warning');}},
+    player:{setParentWindowHandle(){calls.push('parent');},prewarm(){calls.push('prewarm');return pending;}},mainWindow:undefined
+  };
   vm.runInNewContext(ts.transpileModule(create.getText(source)+'\nglobalThis.create=createWindow;',{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,context);
   return{context,calls,resolve,reject};
 }

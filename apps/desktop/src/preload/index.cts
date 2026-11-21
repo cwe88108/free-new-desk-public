@@ -1,6 +1,10 @@
 import { contextBridge,ipcRenderer } from 'electron';
 
 const isUiSmoke=()=>process.env.FND_UI_SMOKE==='1'||process.argv.includes('--ui-smoke');
+const rollback = {
+  playbackClock: process.argv.includes('--fnd-legacy-playback-clock'),
+  nativeOcclusion: process.argv.includes('--fnd-legacy-native-occlusion'),
+};
 type LivePlayRequest={sourceId:string;channelId:string;routeIndex?:number;allowFallback?:boolean};
 type LivePlayResult={ok:boolean;detail?:string;routeIndex:number;routeCount:number;attempts?:Array<{index:number;ok:boolean;detail?:string}>};
 type LiveRouteSpeed={index:number;ok:boolean;latencyMs:number;bytes:number;kbps:number;message?:string};
@@ -127,6 +131,7 @@ ipcRenderer.on('playback:runtimeSessionChanged',(_event,value:RuntimeSession)=>{
 ipcRenderer.on('fullscreen-overlay:renderer-action',(_event,value:{action?:unknown;requestId?:unknown})=>{const requestId=typeof value?.requestId==='string'?value.requestId:'';if(!requestId||runtimeSession.requestId!==requestId)return;if(value.action==='live-prev'&&runtimeSession.domain==='live'&&activeLive){void switchLiveChannel(-1);return;}if(value.action==='live-next'&&runtimeSession.domain==='live'&&activeLive){void switchLiveChannel(1);return;}if(value.action==='next'&&runtimeSession.domain==='vod')notifyOverlayAction({action:'next',requestId});});
 
 contextBridge.exposeInMainWorld('desktop',{
+  rollback,
   app:{getInfo:()=>ipcRenderer.invoke('app:getInfo'),isUiSmoke,openRoute:(route:string)=>ipcRenderer.invoke('app:newWindow',route),action:(action:'reload'|'devtools'|'quit'|{copy:string})=>ipcRenderer.invoke('app:action',action),onNavigate:(listener:(path:string)=>void)=>{const handler=(_event:Electron.IpcRendererEvent,path:string)=>listener(path);ipcRenderer.on('app:navigate',handler);return()=>ipcRenderer.removeListener('app:navigate',handler);}},
   source:{onChanged:(listener:()=>void)=>{const handler=()=>listener();ipcRenderer.on('source:changed',handler);return()=>ipcRenderer.removeListener('source:changed',handler);},executableStatus:()=>ipcRenderer.invoke('source:executableStatus'),reviewExecutable:(sourceId:string)=>ipcRenderer.invoke('source:reviewExecutable',{sourceId}),approveExecutable:(sourceId:string)=>ipcRenderer.invoke('source:approveExecutable',{sourceId}),revokeExecutable:(sourceId:string)=>ipcRenderer.invoke('source:revokeExecutable',{sourceId}),ping:()=>ipcRenderer.invoke('source:ping'),list:()=>ipcRenderer.invoke('source:list'),save:(source:unknown)=>ipcRenderer.invoke('source:save',source),setEnabledBulk:(value:unknown)=>ipcRenderer.invoke('source:setEnabledBulk',value),remove:(sourceId:string)=>ipcRenderer.invoke('source:remove',{sourceId}),removeImportGroup:(importGroupId:string)=>ipcRenderer.invoke('source:removeImportGroup',{importGroupId}),checkImportGroup:(importGroupId:string)=>ipcRenderer.invoke('source:checkImportGroup',{importGroupId}),home:(sourceId:string,force=false)=>ipcRenderer.invoke('source:home',{sourceId,force}),category:(sourceId:string,categoryId:string,page=1,filters:Record<string,string>={},force=false)=>ipcRenderer.invoke('source:category',{sourceId,categoryId,page,filters,force}),search:(sourceId:string,keyword:string,page=1,force=false)=>ipcRenderer.invoke('source:search',{sourceId,keyword,page,force}),detail:(sourceId:string,ids:string[],force=false)=>ipcRenderer.invoke('source:detail',{sourceId,ids,force}),aggregateSearch:(keyword:string)=>ipcRenderer.invoke('source:aggregateSearch',keyword),cancelAggregateSearch:()=>ipcRenderer.invoke('source:cancelAggregateSearch'),audit:(sourceId:string)=>ipcRenderer.invoke('source:audit',{sourceId}),exportAudit:(sourceId:string)=>ipcRenderer.invoke('source:exportAudit',{sourceId}),health:()=>ipcRenderer.invoke('source:health'),onHealthChanged:(listener:(value:{ok:boolean;checkedAt:string})=>void)=>{const handler=(_event:Electron.IpcRendererEvent,value:{ok:boolean;checkedAt:string})=>listener(value);ipcRenderer.on('source:healthChanged',handler);return()=>ipcRenderer.removeListener('source:healthChanged',handler);}},
   config:{importText:(text:string)=>ipcRenderer.invoke('config:importText',text),importFile:()=>ipcRenderer.invoke('config:importFile')},
@@ -137,7 +142,15 @@ contextBridge.exposeInMainWorld('desktop',{
   vodFavorites:{list:()=>ipcRenderer.invoke('favorites:vodState'),mutate:(value:unknown)=>ipcRenderer.invoke('favorites:vodMutate',value),import:(value:unknown)=>ipcRenderer.invoke('favorites:import',value),recovery:()=>ipcRenderer.invoke('favorites:vodRecovery')},
   history:{list:(limit=20)=>ipcRenderer.invoke('history:list',limit),updateProgress:(id:string,position:number,duration:number)=>ipcRenderer.invoke('history:updateProgress',{id,position,duration}),remove:(id:string)=>ipcRenderer.invoke('history:remove',id),clear:()=>ipcRenderer.invoke('history:clear')},
   reservation:{list:()=>ipcRenderer.invoke('reservation:list'),save:(value:unknown)=>ipcRenderer.invoke('reservation:save',value),remove:(id:string)=>ipcRenderer.invoke('reservation:remove',id)},
-  settings:{list:()=>ipcRenderer.invoke('settings:list'),set:(key:string,value:string)=>ipcRenderer.invoke('settings:set',{key,value})},
+  settings:{
+    list:()=>ipcRenderer.invoke('settings:list'),
+    set:(key:string,value:string)=>ipcRenderer.invoke('settings:set',{key,value}),
+    onAppearanceChanged:(listener:(values:Record<string,string>)=>void)=>{
+      const handler=(_event:Electron.IpcRendererEvent,values:Record<string,string>)=>listener(values);
+      ipcRenderer.on('settings:appearanceChanged',handler);
+      return()=>ipcRenderer.removeListener('settings:appearanceChanged',handler);
+    }
+  },
   cache:{stats:()=>ipcRenderer.invoke('cache:stats'),clear:(namespace?:string)=>ipcRenderer.invoke('cache:clear',namespace)},
   diagnostics:{dashboard:()=>ipcRenderer.invoke('diagnostics:dashboard'),get:()=>ipcRenderer.invoke('diagnostics:get'),events:(limit=20)=>ipcRenderer.invoke('diagnostics:events',limit),selfTestItem:(index:number)=>ipcRenderer.invoke('diagnostics:selfTestItem',index),export:()=>ipcRenderer.invoke('diagnostics:export'),recordPerformance:(metric:string,value:number)=>ipcRenderer.invoke('diagnostics:recordPerformance',{metric,value})},
   maintenance:{openPath:(kind:'logs'|'temp'|`cache:${string}`)=>ipcRenderer.invoke('maintenance:openPath',kind)},  update:{check:(channel:'stable'|'daily'='stable')=>ipcRenderer.invoke('update:check',channel),openReleases:()=>ipcRenderer.invoke('update:openReleases'),authorization:()=>ipcRenderer.invoke('update:authorization'),authorize:(token:string)=>ipcRenderer.invoke('update:authorize',token),forgetAuthorization:()=>ipcRenderer.invoke('update:forgetAuthorization'),openAuthorization:()=>ipcRenderer.invoke('update:openAuthorization')}

@@ -4,6 +4,7 @@ import {getMusicDiagnostics} from './music-service.js';
 import {GITHUB_UPDATE_CREDENTIAL_KEY,publicUpdateSettings,githubUpdateAuthorization,readGitHubUpdateToken,saveGitHubUpdateToken,forgetGitHubUpdateToken,validateGitHubUpdateToken} from './github-update-auth.js';
 import {redactDiagnosticArtifact,redactDiagnosticText} from './diagnostic-redaction.js';
 import { app,BrowserWindow,clipboard,dialog,ipcMain,Menu,nativeImage,nativeTheme,Notification,powerMonitor,protocol,safeStorage,screen,shell,Tray,type IpcMainInvokeEvent } from 'electron';
+import { fitWindowToWorkArea, minimumWindowSize } from './window-placement.js';
 import { mkdirSync } from 'node:fs';
 import {readImportFile} from './import-file.js';
 import { appendFile,mkdir,readFile,rm,writeFile } from 'node:fs/promises';
@@ -116,12 +117,96 @@ const liveGroupsCache=new Map<string,LiveGroup[]>();
 function requireLocalSender(event:IpcMainInvokeEvent):void{const sender=event.senderFrame?.url??'';if(!sender.startsWith('file://'))throw new Error('Untrusted IPC sender');}
 async function createUiSmokeMedia():Promise<string>{const sampleRate=8000,seconds=3,samples=sampleRate*seconds,dataSize=samples*2,buffer=Buffer.alloc(44+dataSize);buffer.write('RIFF',0,'ascii');buffer.writeUInt32LE(36+dataSize,4);buffer.write('WAVE',8,'ascii');buffer.write('fmt ',12,'ascii');buffer.writeUInt32LE(16,16);buffer.writeUInt16LE(1,20);buffer.writeUInt16LE(1,22);buffer.writeUInt32LE(sampleRate,24);buffer.writeUInt32LE(sampleRate*2,28);buffer.writeUInt16LE(2,32);buffer.writeUInt16LE(16,34);buffer.write('data',36,'ascii');buffer.writeUInt32LE(dataSize,40);const file=path.join(app.getPath('temp'),'free-new-desk-ui-smoke.wav');await writeFile(file,buffer);return pathToFileURL(file).href;}
 function allowedExternal(value:string):boolean{try{const url=new URL(value);return url.protocol==='https:'&&url.hostname==='github.com'&&(url.pathname===`/${repositoryPath}`||url.pathname.startsWith(`/${repositoryPath}/`));}catch{return false;}}
-function restoreWindowBounds(store:DataService|undefined):{width:number;height:number} | {width:number;height:number;x:number;y:number}{const fallback={width:1440,height:900};if(!store)return fallback;try{const parsed=JSON.parse(store.getSetting('window.bounds')??'') as {x?:unknown;y?:unknown;width?:unknown;height?:unknown};const width=Number(parsed.width),height=Number(parsed.height);if(!Number.isFinite(width)||!Number.isFinite(height))return fallback;const size={width:Math.max(1280,Math.min(width,3840)),height:Math.max(720,Math.min(height,2160))};const x=Number(parsed.x),y=Number(parsed.y);if(!Number.isFinite(x)||!Number.isFinite(y))return size;const display=screen.getDisplayMatching({x:Math.round(x),y:Math.round(y),width:size.width,height:size.height});const area=display.workArea;if(x<area.x-8||y<area.y-8||x+size.width>area.x+area.width+8||y+size.height>area.y+area.height+8)return size;return{...size,x:Math.round(x),y:Math.round(y)};}catch{return fallback;}}
+const desktopWindows = new Set<BrowserWindow>();
+const appearanceKeys = ['theme', 'ui.season', 'ui.accentChoice', 'ui.accent', 'ui.effects', 'ui.fontScale'] as const;
+
+function restoreWindowBounds(store: DataService | undefined) {
+  let saved: { x?: number; y?: number; width?: number; height?: number; maximized?: boolean } = {};
+  try {
+    const value = JSON.parse(store?.getSetting('window.bounds') ?? 'null');
+    if (value && typeof value === 'object') saved = value;
+  } catch { /* A legacy or damaged setting uses the current display. */ }
+  const { x, y, width, height } = saved;
+  const display = typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)
+    ? screen.getDisplayMatching({ x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.min(3840, Math.round(width || 1))), height: Math.max(1, Math.min(2160, Math.round(height || 1))) })
+    : screen.getPrimaryDisplay();
+  return { bounds: fitWindowToWorkArea(display.workArea, saved), minimum: minimumWindowSize(display.workArea), maximized: saved.maximized === true };
+}
+
+function updateWindowWorkArea(window: BrowserWindow, fit: boolean): void {
+  if (window.isDestroyed() || window.isFullScreen() || window.isMaximized() || window.isMinimized()) return;
+  const current = window.getBounds();
+  const { workArea } = screen.getDisplayMatching(current);
+  const minimum = minimumWindowSize(workArea);
+  const [width, height] = window.getMinimumSize();
+  if (width !== minimum[0] || height !== minimum[1]) window.setMinimumSize(...minimum);
+  if (fit || current.width > workArea.width || current.height > workArea.height) {
+    const next = fitWindowToWorkArea(workArea, current);
+    if (next.x !== current.x || next.y !== current.y || next.width !== current.width || next.height !== current.height) window.setBounds(next);
+  }
+}
 function persistMainWindowBounds():void{if(!data||!mainWindow||mainWindow.isDestroyed())return;try{const bounds=mainWindow.getNormalBounds();data.setSetting('window.bounds',JSON.stringify({...bounds,maximized:mainWindow.isMaximized()}));}catch{/* bounds persistence is best effort */}}
 function assetPath(name:string):string{return app.isPackaged?path.join(process.resourcesPath,'assets',name):path.join(app.getAppPath(),'assets',name);}
 function appIconPath():string{return assetPath('app-icon.png');}
 function trayIconPath():string{return assetPath('tray-icon.png');}
-function createWindow(route?:string,primary=true):BrowserWindow{const bounds=restoreWindowBounds(data);const window=new BrowserWindow({...bounds,minWidth:1280,minHeight:720,show:false,title:'Free New Desk',icon:appIconPath(),backgroundColor:'#00000000',backgroundMaterial:process.platform==='win32'?'mica':'none',titleBarStyle:'hidden',titleBarOverlay:process.platform==='win32'?{color:'#00000000',symbolColor:nativeTheme.shouldUseDarkColors?'#ffffff':'#111111',height:48}:false,roundedCorners:true,webPreferences:{preload:path.join(__dirname,'..','preload','index.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});window.webContents.setWindowOpenHandler(({url})=>{if(allowedExternal(url))void shell.openExternal(url);return{action:'deny'};});window.webContents.on('will-navigate',(event,url)=>{if(url!==window.webContents.getURL())event.preventDefault();});window.webContents.on('will-attach-webview',event=>event.preventDefault());window.webContents.on('render-process-gone',(_event,details)=>logger?.fatal('crash','renderer process gone',{reason:details.reason,exitCode:details.exitCode}));window.webContents.session.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));void window.loadFile(path.join(__dirname,'..','renderer','index.html'),route?{hash:route}:undefined);window.once('ready-to-show',()=>window.show());window.on('close',event=>{persistMainWindowBounds();if(!quitting&&tray&&window===mainWindow){event.preventDefault();window.hide();}});window.on('closed',()=>{if(mainWindow===window)mainWindow=undefined;});if(primary){mainWindow=window;player.setParentWindowHandle(window.getNativeWindowHandle());void player.prewarm().catch(error=>logger?.warn('player','PlayerHost prewarm failed',{detail:error instanceof Error?error.message:String(error)}));}logger?.info('lifecycle','window created',{windowId:window.id,primary});return window;}
+const rollbackArguments = ['fnd-legacy-playback-clock', 'fnd-legacy-native-occlusion']
+  .filter(switchName => app.commandLine.hasSwitch(switchName))
+  .map(switchName => '--' + switchName);
+function createWindow(route?: string, primary = true): BrowserWindow {
+  const { bounds, minimum: [minWidth, minHeight], maximized } = restoreWindowBounds(data);
+  const window = new BrowserWindow({
+    ...bounds, minWidth, minHeight, show: false, title: 'Free New Desk', icon: appIconPath(),
+    backgroundColor: '#00000000', backgroundMaterial: process.platform === 'win32' ? 'mica' : 'none',
+    titleBarStyle: 'hidden', titleBarOverlay: process.platform === 'win32' ? titleBarOverlay() : false,
+    roundedCorners: true,
+    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'index.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, additionalArguments: rollbackArguments }
+  });
+  desktopWindows.add(window);
+  window.webContents.setWindowOpenHandler(({ url }) => { if (allowedExternal(url)) void shell.openExternal(url); return { action: 'deny' }; });
+  window.webContents.on('will-navigate', (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); });
+  window.webContents.on('will-attach-webview', event => event.preventDefault());
+  window.webContents.on('render-process-gone', (_event, details) => logger?.fatal('crash', 'renderer process gone', { reason: details.reason, exitCode: details.exitCode }));
+  window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), route ? { hash: route } : undefined);
+  window.once('ready-to-show', () => {
+    if (primary && maximized) window.maximize();
+    window.show();
+  });
+  window.on('moved', () => updateWindowWorkArea(window, false));
+  const refit = () => updateWindowWorkArea(window, true);
+  window.on('unmaximize', refit);
+  window.on('restore', refit);
+  window.on('leave-full-screen', refit);
+  window.on('close', event => {
+    persistMainWindowBounds();
+    if (!quitting && tray && window === mainWindow) { event.preventDefault(); window.hide(); }
+  });
+  window.on('closed', () => {
+    desktopWindows.delete(window);
+    if (mainWindow === window) mainWindow = undefined;
+  });
+  if (primary) {
+    mainWindow = window;
+    player.setParentWindowHandle(window.getNativeWindowHandle());
+    void player.prewarm().catch(error => logger?.warn('player', 'PlayerHost prewarm failed', { detail: error instanceof Error ? error.message : String(error) }));
+  }
+  logger?.info('lifecycle', 'window created', { windowId: window.id, primary });
+  return window;
+}
+
+function titleBarOverlay() {
+  return { color: '#00000000', symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#111111', height: 48 };
+}
+
+nativeTheme.on('updated', () => {
+  if (process.platform === 'win32') for (const window of desktopWindows) window.setTitleBarOverlay(titleBarOverlay());
+});
+
+void app.whenReady().then(() => {
+  const refitWindows = () => { for (const window of desktopWindows) updateWindowWorkArea(window, true); };
+  screen.on('display-removed', refitWindows);
+  screen.on('display-metrics-changed', refitWindows);
+});
 
 function notifySourcesChanged():void{mainWindow?.webContents.send('source:changed');}
 async function syncSources():Promise<void>{playbackResolutionCache.clear();try{if(data)await sourceEngine.replaceAll(data.listSources());}finally{notifySourcesChanged();}}
@@ -423,7 +508,23 @@ function registerIpc(store:DataService,log:JsonLogger):void{
   ipcMain.handle('favorites:import',trusted(input=>store.importFavorites(input)));
   ipcMain.handle('favorites:vodRecovery',event=>{requireLocalSender(event);return store.vodFavoriteRecovery();});
   ipcMain.handle('settings:list',(event)=>{requireLocalSender(event);return Object.fromEntries(Object.entries(publicUpdateSettings(store)).filter(([key])=>key!==VOD_FAVORITES_KEY&&key!==VOD_FAVORITES_RECOVERY_KEY&&key!==PLAYLIST_CLEANUP_KEY));});
-  ipcMain.handle('settings:set',trusted(input=>{if(!input||typeof input!=='object')throw new Error('Invalid setting');const{key,value}=input as Record<string,unknown>;if(typeof key!=='string'||typeof value!=='string')throw new Error('Setting must be string');if([GITHUB_UPDATE_CREDENTIAL_KEY,VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY,PLAYLIST_CLEANUP_KEY].includes(key))throw new Error('授权或收藏必须通过专用入口验证和保存');store.setSetting(key,value);if(key==='theme'&&(value==='system'||value==='light'||value==='dark'))nativeTheme.themeSource=value;if(key==='cache.maxBytes'&&cache)cache.setMaxBytes(Number(value));return true;}));
+  ipcMain.handle('settings:set', trusted(input => {
+    if (!input || typeof input !== 'object') throw new Error('Invalid setting');
+    const { key, value } = input as Record<string, unknown>;
+    if (typeof key !== 'string' || typeof value !== 'string') throw new Error('Setting must be string');
+    if ([GITHUB_UPDATE_CREDENTIAL_KEY,VOD_FAVORITES_KEY,VOD_FAVORITES_RECOVERY_KEY,PLAYLIST_CLEANUP_KEY].includes(key)) throw new Error('授权或收藏必须通过专用入口验证和保存');
+    store.setSetting(key, value);
+    if (key === 'theme' && (value === 'system' || value === 'light' || value === 'dark')) nativeTheme.themeSource = value;
+    if (key === 'cache.maxBytes' && cache) cache.setMaxBytes(Number(value));
+    if (appearanceKeys.some(item => item === key)) {
+      const appearance = Object.fromEntries(appearanceKeys.flatMap(item => {
+        const stored = store.getSetting(item);
+        return stored === undefined ? [] : [[item, stored]];
+      }));
+      for (const window of desktopWindows) window.webContents.send('settings:appearanceChanged', appearance);
+    }
+    return true;
+  }));
   ipcMain.handle('cache:stats',async event=>{requireLocalSender(event);return cache?.stats()??{bytes:0,files:0,maxBytes:0,namespaces:[]};});
   ipcMain.handle('cache:clear',trusted(async input=>{const namespace=typeof input==='string'&&input.trim()?input.trim():undefined;if(namespace&&!/^[a-z0-9_-]{1,64}$/i.test(namespace))throw new Error('Invalid cache namespace');await cache?.clear(namespace);return true;}));
 

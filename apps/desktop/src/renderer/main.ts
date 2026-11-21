@@ -4,16 +4,9 @@ import App from './App.vue';
 import { router } from './router';
 import './styles.css';
 import './parity.css';
-
-const systemDark=window.matchMedia('(prefers-color-scheme: dark)');
-function resolvedTheme(theme:string):'light'|'dark'{return theme==='dark'||(theme==='system'&&systemDark.matches)?'dark':'light';}
-function applyTheme(theme:string):void{
-  const resolved=resolvedTheme(theme);
-  document.documentElement.style.colorScheme=resolved;
-  document.documentElement.dataset.themePreference=theme;
-  document.documentElement.dataset.theme=resolved;
-}
-systemDark.addEventListener('change',()=>{if(document.documentElement.dataset.themePreference==='system')applyTheme('system');});
+import './appearance.css';
+import './desktop-layout.css';
+import { initializeAppearance } from './appearance';
 
 const smokeFrameGaps:number[]=[];
 let smokeFrameSampling=false,smokeFrameHandle=0,smokeFrameLast=0;
@@ -140,12 +133,8 @@ async function bootstrap():Promise<void>{
     const app=createApp(App);
     app.config.errorHandler=error=>renderFatal(error);
     app.use(createPinia()).use(router);
-    await router.isReady();
+    await Promise.all([router.isReady(), initializeAppearance()]);
     app.mount('#app');
-    const settings=await window.desktop.settings.list().catch(()=>({} as Record<string,string>));
-    applyTheme(settings.theme??'system');
-    const fontScale=Math.max(.9,Math.min(1.5,Number(settings['ui.fontScale']??1)||1));
-    document.documentElement.style.setProperty('--font-scale',String(fontScale));
     document.documentElement.classList.add('renderer-ready');
     document.title='Free New Desk - Ready';
     if(window.desktop.app.isUiSmoke())void runUiSmoke().catch(renderFatal);

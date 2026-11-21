@@ -47,7 +47,7 @@ test('v1.4.16 uses the supplied transparent icon across renderer window tray and
     text('scripts/materialize-app-icons.mjs')
   ]);
   assert.match(main,/function appIconPath\(\)/);
-  assert.match(main,/icon:appIconPath\(\)/);
+  assert.match(main,/icon:\s*appIconPath\(\)/);
   assert.match(main,/nativeImage\.createFromPath\(appIconPath\(\)\)/);
   assert.match(app,/import appIconUrl from '.\/assets\/app-icon\.png'/);
   assert.match(manifest,/assets\/app-icon\.ico/);

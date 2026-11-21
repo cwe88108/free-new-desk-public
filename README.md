@@ -6,7 +6,7 @@ Free New Desk 是一款面向 **Windows 11 x64** 的 TVBox / FongMi 风格桌面
 
 **软件不内置、不推荐任何第三方影视源。** 首次打开没有影视内容，需要自行添加合法来源；体验本地音乐不需要影视配置。
 
-**当前版本：V1.6.0** · [下载安装版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.6.0/Free-New-Desk-Setup-1.6.0-x64.exe) · [下载便携版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.6.0/Free-New-Desk-Portable-1.6.0-x64.exe) · [问题反馈](https://github.com/cwe88108/free-new-desk-public/issues)
+**当前版本 V1.7.0** · [下载安装版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.7.0/Free-New-Desk-Setup-1.7.0-x64.exe) · [下载便携版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.7.0/Free-New-Desk-Portable-1.7.0-x64.exe) · [问题反馈](https://github.com/cwe88108/free-new-desk-public/issues)
 
 TVBox/FongMi-style media player for Windows 11 x64, with local, SMB and WebDAV music libraries. No third-party video sources are included; bring your own authorized configuration.
 
@@ -27,12 +27,12 @@ TVBox/FongMi-style media player for Windows 11 x64, with local, SMB and WebDAV m
 
 ## 下载与安装
 
-| 你想怎么用 | 下载 V1.6.0 |
+| 你想怎么用 | 下载 V1.7.0 |
 | --- | --- |
-| 正常安装，创建桌面与开始菜单快捷方式 | [Windows x64 安装版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.6.0/Free-New-Desk-Setup-1.6.0-x64.exe) |
-| 不安装，直接运行；仍会保存应用数据 | [Windows x64 便携版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.6.0/Free-New-Desk-Portable-1.6.0-x64.exe) |
-| 核对下载文件 | [SHA256 校验值](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.6.0/SHA256SUMS-PUBLIC.txt) |
-| 查看本次安装包对应的构建输入 | [源码快照](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.6.0/Free-New-Desk-Source-1.6.0-public.zip) |
+| 正常安装，创建桌面与开始菜单快捷方式 | [Windows x64 安装版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.7.0/Free-New-Desk-Setup-1.7.0-x64.exe) |
+| 直接运行便携版并保留应用数据 | [Windows x64 便携版](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.7.0/Free-New-Desk-Portable-1.7.0-x64.exe) |
+| 核对下载文件 | [SHA256 校验值](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.7.0/SHA256SUMS-PUBLIC.txt) |
+| 查看本次安装包对应的构建输入 | [源码快照](https://github.com/cwe88108/free-new-desk-public/releases/download/v1.7.0/Free-New-Desk-Source-1.7.0-public.zip) |
 
 - **系统：** 主要开发与实测环境是 Windows 11 x64；Windows 10 x64 的完整兼容性尚未验证。
 - **运行环境：** 发行包自带 libmpv，无需另装 VLC / FFmpeg；只有使用纯 JVM JAR 来源时才需另备 Java 17+。
@@ -65,6 +65,8 @@ TVBox/FongMi-style media player for Windows 11 x64, with local, SMB and WebDAV m
 
 配置兼容覆盖 CMS XML / JSON、Type4、JS Spider、Drpy / Drpy2、XYQ、XBPQ，以及可选 JVM Spider / Plugin Host。**协议支持不等于每个来源都能播放**，实际结果取决于来源响应、执行环境和媒体兼容性；不承诺依赖 Android 环境的 JAR 完全兼容。
 
+早期兼容性基线见 [V1.4.7 的 V2 影视仓兼容状态](docs/compatibility-v2-status.md)。
+
 ## 使用前需要知道
 
 ### 安全与更新
@@ -81,14 +83,14 @@ TVBox/FongMi-style media player for Windows 11 x64, with local, SMB and WebDAV m
 
 开发者不提供、推荐、背书或担保任何第三方来源，其可用性、内容和使用条件由来源提供者决定。软件按**“原样”**提供，不提供任何明示或暗示担保；兼容性与测试通过情况不构成内容或服务保证。
 
-## V1.6.0 更新内容
+## V1.7.0 更新内容
 
-- 首页加载更轻，优化海报缓存和大量来源下的列表响应。
-- 改进电影、剧集、综艺和动漫分类，完善点播源兼容和来源健康检查。
-- 改进点播、直播和音乐切换时的播放接管、状态恢复和画面显示。
-- 公开版可匿名查询本仓库的发行版本，发行包提供安装版和便携版。
+- 新增春山新雨、夏花流火和凛冬初雪三套主题。原有暖色风格保留为秋庭鎏金。四套主题都可选择浅色、深色或跟随系统。
+- 优化首页续播、点播海报、频道列表和播放器队列。窄窗下重排工具栏和内容区，支持放大界面字号与系统高对比度。
+- 精简空闲和暂停时的界面刷新。切换主题时保留播放会话与队列状态，改进菜单和视频画面重叠时的显示。
+- 修复窄窗下音乐来源入口消失的问题。在侧栏内按 Esc 可关闭，并将键盘焦点交回入口。
 
-[查看 V1.6.0 发行说明](https://github.com/cwe88108/free-new-desk-public/releases/tag/v1.6.0) · [查看历史版本](https://github.com/cwe88108/free-new-desk-public/releases)
+[查看 V1.7.0 发行说明](https://github.com/cwe88108/free-new-desk-public/releases/tag/v1.7.0) · [查看历史版本](https://github.com/cwe88108/free-new-desk-public/releases)
 
 ## 开发与构建
 
@@ -100,7 +102,7 @@ npm run verify
 npm run package:win
 ```
 
-构建产物位于 `dist/releases`。更多步骤见 [开发说明](docs/README-dev.md)（其中部分版本介绍为历史内容）。发行源码快照对应安装包的构建输入，主线另含后续文档与历史截图更新；构建来源的清单与核对说明见 [V1.6.0 Release](https://github.com/cwe88108/free-new-desk-public/releases/tag/v1.6.0)。
+构建产物位于 `dist/releases`。更多步骤见 [开发说明](docs/README-dev.md)（其中部分版本介绍为历史内容）。发行源码快照对应安装包的构建输入。构建清单与校验文件见 [V1.7.0 Release](https://github.com/cwe88108/free-new-desk-public/releases/tag/v1.7.0)。
 
 ## 第三方与许可
 
